@@ -110,7 +110,7 @@ class ParseOp:
 class ExtractOp:
     filter_op: FilterOp
     parse_op: ParseOp
-    content: Any        
+    content: Optional[Any] = None       
 
 
     @property

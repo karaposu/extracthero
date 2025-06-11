@@ -1,13 +1,16 @@
 #extracthero.py
 
+
+# to run python -m extracthero.extracthero
+
 import re
 from typing import Any, Dict
 from time import time
 
-from myllmservice import MyLLMService
+from extracthero.myllmservice import MyLLMService
 from extracthero.schemes import ExtractConfig
 from extracthero.schemes import FilterOp, ParseOp, ExtractOp
-from domreducer import HTMLReducer
+from domreducer import HtmlReducer
 import json
 from json import JSONDecodeError
 # from string2Dict
@@ -29,8 +32,8 @@ class Extractor:
         
         # 1. HTML reduction if needed
         if text_type == "html":
-            reducer = HTMLReducer()
-            reduce_op = reducer.reduce(text)
+            reducer = HtmlReducer(text)
+            reduce_op = reducer.reduce()
             if reduce_op.success:
                 corpus = reduce_op.reduced_data
                 reduced_html = reduce_op.reduced_data
@@ -155,9 +158,49 @@ class Extractor:
 def main():
     extractor = Extractor()
     # example usage...
-    sample_html = "<html>...</html>"
-    op = extractor.extract(sample_html, "Extract product names", text_type="html")
-    print(op)
+    # sample_html = "<html>...</html>"
+
+    sample_html = """
+    <!DOCTYPE html>
+    <html lang="en">
+    <head>
+        <meta charset="UTF-8">
+        <title>Product Listing</title>
+    </head>
+    <body>
+        <div class="product" id="prod-1001">
+            <h2 class="title">Wireless Keyboard</h2>
+            <p class="description">Ergonomic wireless keyboard with rechargeable battery</p>
+            <span class="price">€49.99</span>
+            <ul class="features">
+                <li>Bluetooth connectivity</li>
+                <li>Compact design</li>
+            </ul>
+        </div>
+        <div class="product" id="prod-1002">
+            <h2 class="title">USB-C Hub</h2>
+            <p class="description">6-in-1 USB-C hub with HDMI and Ethernet ports</p>
+            <span class="price">€29.50</span>
+            <ul class="features">
+                <li>4K HDMI output</li>
+                <li>Gigabit Ethernet</li>
+            </ul>
+        </div>
+    </body>
+    </html>
+    """
+    # op = extractor.extract(sample_html, "Extract product names", text_type="html")
+    op = extractor.extract(sample_html, "Extract product titles and prices", text_type="html")
+    print(op.parse_op.content)
+
+    print("reduced_html:")
+
+    print(op.filter_op.content)
+
+    print("")
+
+    print("parse results:")
+    print(op.parse_op.content)
 
 
 if __name__ == "__main__":

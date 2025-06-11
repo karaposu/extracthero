@@ -1,2 +1,4 @@
-requests
 python-dotenv
+llmservice
+domreducer
+string2dict

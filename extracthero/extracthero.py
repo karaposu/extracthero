@@ -17,7 +17,7 @@ from extracthero.schemes import (
 from extracthero.filterhero import FilterHero
 
 
-class Extractor:
+class ExtractHero:
     """High-level orchestrator that chains FilterHero → LLM parse phase."""
 
     def __init__(self, config: ExtractConfig | None = None, llm: MyLLMService | None = None):
@@ -102,7 +102,7 @@ class Extractor:
 
 # ─────────────────────────── simple demo ───────────────────────────
 def main() -> None:
-    extractor = Extractor()
+    extractor = ExtractHero()
 
     # define what to extract
     items = [

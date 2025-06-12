@@ -91,7 +91,7 @@ class MyLLMService(BaseLLMService):
                             Task Description:
                             Your job is to parse the text into a json format using given keys, Do NOT add or remove information. Your job is parsing. 
                             IF there is no information regarding any keyword, you must put it's value as None 
-
+                            
                             Give the output in strict JSON format
                             
                             """
@@ -117,8 +117,12 @@ class MyLLMService(BaseLLMService):
 
         result = self.execute_generation(generation_request)
         return result
+    
 
 
+    
+
+    
     def filter_via_llm(
         self,
         corpus: str,

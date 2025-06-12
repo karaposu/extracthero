@@ -1,206 +1,140 @@
-#extracthero.py
+# extracthero.py
+# run with: python -m extracthero.extracthero
 
+from __future__ import annotations
 
-# to run python -m extracthero.extracthero
-
-import re
-from typing import Any, Dict
 from time import time
+from typing import List, Union, Optional
 
 from extracthero.myllmservice import MyLLMService
-from extracthero.schemes import ExtractConfig
-from extracthero.schemes import FilterOp, ParseOp, ExtractOp
-from domreducer import HtmlReducer
-import json
-from json import JSONDecodeError
-# from string2Dict
-
-from string2dict import String2Dict
-
+from extracthero.schemes import (
+    ExtractConfig,
+    ExtractOp,
+    FilterOp,
+    ParseOp,
+    ItemToExtract,
+)
+from extracthero.filterhero import FilterHero
 
 
 class Extractor:
-    def __init__(self, config: ExtractConfig = None, myllmservice=None):
+    """High-level orchestrator that chains FilterHero → LLM parse phase."""
+
+    def __init__(self, config: ExtractConfig | None = None, llm: MyLLMService | None = None):
         self.config = config or ExtractConfig()
-        self.myllmservice = myllmservice or MyLLMService()
+        self.llm = llm or MyLLMService()
+        self.filter_hero = FilterHero(self.config, self.llm)
 
-    def filter_with_llm(
-        self, text: str, thing_to_extract: str, text_type: str = None
-    ) -> FilterOp:
-        start_time = time()
-        reduced_html = None
-        
-        # 1. HTML reduction if needed
-        if text_type == "html":
-            reducer = HtmlReducer(text)
-            reduce_op = reducer.reduce()
-            if reduce_op.success:
-                corpus = reduce_op.reduced_data
-                reduced_html = reduce_op.reduced_data
-            else:
-                corpus = text
-        else:
-            corpus = text
-
-        
-        
-        if text_type == "json":
-
-            s2d=String2Dict()
-            parsed_dict= s2d.run(text)
-            if parsed_dict is None:
-                return FilterOp.from_result(
-                    config=self.config,
-                    content=None,
-                    usage=None,
-                    reduced_html=None,
-                    start_time=start_time,
-                    success=False,
-                    error="text_type=json but json is invalid"
-                )
-            if isinstance(thing_to_extract, list):
-                content = {key: parsed_dict.get(key) for key in thing_to_extract}
-            else:
-                content = parsed_dict.get(thing_to_extract)
-            return FilterOp.from_result(
-                config=self.config,
-                content=content,
-                usage=None,
-                reduced_html=None,
-                start_time=start_time,
-                success=True
-            )
-        
-        # 
-        # 2. LLM-based filtering
-        generation_result = self.myllmservice.filter_via_llm(corpus, thing_to_extract)
-        
-        # 3. Wrap in FilterOp
-        return FilterOp.from_result(
-            config=self.config,
-            content=generation_result.content if generation_result.success else None,
-            usage=generation_result.usage,
-            reduced_html=reduced_html,
-            start_time=start_time,
-            success=generation_result.success
+    # ────────────────────────── parse phase ──────────────────────────
+    def _parser(
+        self,
+        corpus: str,
+        items: ItemToExtract | List[ItemToExtract],
+    ) -> ParseOp:
+        start_ts = time()
+        prompt = (
+            items.compile()
+            if isinstance(items, ItemToExtract)
+            else "\n\n".join(it.compile() for it in items)
         )
-
-    def parser(self, corpus: str, thing_to_extract: str) -> ParseOp:
-        start_time = time()
-        result = self.myllmservice.parse_via_llm(corpus, thing_to_extract)
+        gen = self.llm.parse_via_llm(corpus, prompt)
         return ParseOp.from_result(
             config=self.config,
-            content=result.content if result.success else None,
-            usage=result.usage,
-            start_time=start_time,
-            success=result.success
+            content=gen.content if gen.success else None,
+            usage=gen.usage,
+            start_time=start_ts,
+            success=gen.success,
+            error=None if gen.success else "LLM parse failed",
         )
 
+    # ─────────────────────────── public API ──────────────────────────
     def extract(
-        self, text: str, thing_to_extract: str, text_type: str = None
+        self,
+        text: str | dict,
+        items: ItemToExtract | List[ItemToExtract],
+        text_type: Optional[str] = None,
+        reduce_html: bool = True,
+        enforce_llm_based_filter: bool = False,
+        filter_separately: bool = False,
     ) -> ExtractOp:
-        # Filter phase
-        filter_op = self.filter_with_llm(text, thing_to_extract, text_type)
+        """
+        End-to-end extraction pipeline.
+
+        Parameters
+        ----------
+        text : raw HTML / JSON string / dict / plain text
+        items: one or many ItemToExtract
+        text_type : "html" | "json" | "dict" | None
+        reduce_html : strip HTML to visible text (default True)
+        enforce_llm_based_filter : force JSON/dict inputs through LLM
+        filter_separately : one LLM call per item (default False)
+        """
+        # Phase-1: filtering
+        filter_op: FilterOp = self.filter_hero.run(
+            text,
+            items,
+            text_type=text_type,
+            filter_separately=filter_separately,
+            reduce_html=reduce_html,
+            enforce_llm_based_filter=enforce_llm_based_filter,
+        )
+
         if not filter_op.success:
-            # short-circuit parse on filter failure
-            parse_start = time()
+            # short-circuit parse phase
             parse_op = ParseOp.from_result(
                 config=self.config,
                 content=None,
                 usage=None,
-                start_time=parse_start,
-                success=False
+                start_time=time(),
+                success=False,
+                error="Filter phase failed",
             )
-            return ExtractOp(filter_op=filter_op, parse_op=parse_op)
+            return ExtractOp(filter_op=filter_op, parse_op=parse_op, content=None)
 
-        # Parse phase
-        parse_op = self.parser(filter_op.content, thing_to_extract)
-        return ExtractOp(filter_op=filter_op, parse_op=parse_op)
-
-    def check_if_contains_mandatory_keywords(self, text: str) -> bool:
-        if not self.config.must_exist_keywords:
-            return True
-        flags = 0 if self.config.keyword_case_sensitive else re.IGNORECASE
-        for kw in self.config.must_exist_keywords:
-            pattern = (
-                rf"\b{re.escape(kw)}\b"
-                if self.config.keyword_whole_word
-                else re.escape(kw)
-            )
-            if not re.search(pattern, text, flags):
-                return False
-        return True
-
-    def confirm_that_content_theme_is_relevant_to_our_search(self, text: str) -> bool:
-        if not self.config.semantics_exist_validation:
-            return True
-        result = self.myllmservice.confirm_that_content_theme_is_relevant_to_our_search(
-            text, self.config.semantics_exist_validation
+        # Phase-2: parsing
+        parse_op = self._parser(filter_op.content, items)
+        return ExtractOp(
+            filter_op=filter_op,
+            parse_op=parse_op,
+            content=parse_op.content,
         )
-        return bool(result.content)
-
-    def isolate_relevant_chunk_only(self, text: str) -> str:
-        result = self.myllmservice.isolate_relevant_chunk_only(
-            text, self.config.semantic_chunk_isolation
-        )
-        return result.content
-
-    def output_format_check_with_regex(self, results: Dict[str, Any]) -> bool:
-        if not self.config.regex_validation:
-            return True
-        for field, pattern in self.config.regex_validation.items():
-            value = results.get(field)
-            if value is None or not re.fullmatch(pattern, str(value)):
-                return False
-        return True
 
 
-def main():
+# ─────────────────────────── simple demo ───────────────────────────
+def main() -> None:
     extractor = Extractor()
-    # example usage...
-    # sample_html = "<html>...</html>"
+
+    # define what to extract
+    items = [
+        ItemToExtract(
+            name="title",
+            desc="Product title",
+            example="Wireless Keyboard",
+        ),
+        ItemToExtract(
+            name="price",
+            desc="Product price with currency symbol",
+            regex_validator=r"€\d+\.\d{2}",
+            example="€49.99",
+        ),
+    ]
 
     sample_html = """
-    <!DOCTYPE html>
-    <html lang="en">
-    <head>
-        <meta charset="UTF-8">
-        <title>Product Listing</title>
-    </head>
-    <body>
-        <div class="product" id="prod-1001">
-            <h2 class="title">Wireless Keyboard</h2>
-            <p class="description">Ergonomic wireless keyboard with rechargeable battery</p>
-            <span class="price">€49.99</span>
-            <ul class="features">
-                <li>Bluetooth connectivity</li>
-                <li>Compact design</li>
-            </ul>
-        </div>
-        <div class="product" id="prod-1002">
-            <h2 class="title">USB-C Hub</h2>
-            <p class="description">6-in-1 USB-C hub with HDMI and Ethernet ports</p>
-            <span class="price">€29.50</span>
-            <ul class="features">
-                <li>4K HDMI output</li>
-                <li>Gigabit Ethernet</li>
-            </ul>
-        </div>
-    </body>
-    </html>
+    <html><body>
+      <div class="product">
+        <h2 class="title">Wireless Keyboard</h2>
+        <span class="price">€49.99</span>
+      </div>
+      <div class="product">
+        <h2 class="title">USB-C Hub</h2>
+        <span class="price">€29.50</span>
+      </div>
+    </body></html>
     """
-    # op = extractor.extract(sample_html, "Extract product names", text_type="html")
-    op = extractor.extract(sample_html, "Extract product titles and prices", text_type="html")
-    print(op.parse_op.content)
-
-    print("reduced_html:")
-
-    print(op.filter_op.content)
-
-    print("")
-
-    print("parse results:")
-    print(op.parse_op.content)
+    
+    op = extractor.extract(sample_html, items, text_type="html")
+    print("Filtered corpus:\n", op.filter_op.content)
+    print("Parsed result:\n", op.parse_op.content)
 
 
 if __name__ == "__main__":

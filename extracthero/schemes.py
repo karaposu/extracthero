@@ -1,10 +1,44 @@
 #schemes.py
 
 import re
-from typing import List, Union, Dict, Any
+from typing import List, Union, Dict, Any, Optional
 from dataclasses import dataclass
 from typing import Any, Optional
 import time
+
+
+from dataclasses import dataclass, field
+from typing import List, Optional
+
+# 
+
+@dataclass
+class CorpusPayload:
+    corpus:       str                # Text input or original JSON string
+    corpus_type:  str                # "html", "json" or "text"
+    reduced_html: Optional[str]      # Only when HTML is reduced
+
+    error:        Optional[str] = None    # ← give a default
+
+
+@dataclass
+class ItemToExtract:
+    name: str                            # Unique field identifier, e.g. "package_type"
+    desc: Optional[str] = None          # Description of what the field represents
+    regex_validator: Optional[str] = None  # Optional regex pattern to validate extracted value
+    text_rules: List[str] = field(default_factory=list)  # Any additional extraction/validation rules
+    example: Optional[str] = None       # An example value to guide extraction
+
+    def compile(self) -> str:
+        parts = [f"field name: {self.name}"]
+        if self.desc:
+            parts.append(f"field description: {self.desc}")
+        if self.text_rules:
+            rules = "; ".join(self.text_rules)
+            parts.append(f"text rules: {rules}")
+        if self.example:
+            parts.append(f"example: {self.example}")
+        return "\n".join(parts)
 
 
 class ExtractConfig:

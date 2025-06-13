@@ -1,123 +1,120 @@
-````markdown
 # extracthero
 
-Now you can extract information from any data with almost zero compromise. 
+Extract **accurate, structured facts** from messy real-world content — raw HTML, screenshots, PDFs, JSON blobs or plain text — with *almost zero compromise.*
 
+---
+
+## Why extracthero?
+
+| Pain-point                                                       | extracthero’s answer                                                                                                                                                                                        |
+| ---------------------------------------------------------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| *DOM spaghetti* (ads, nav bars, JS widgets) pollutes extraction. | **DomReducer** reduces the most-common HTML tags into a compact, linear corpus, stripping layout noise and script cruft while keeping the text you care about.                                              |
+| HTML→Markdown conversions drop dynamic/JS-rendered elements.     | DomReducer’s tag-level reduction keeps content that markdown pass-throughs often lose.                                                                                                                      |
+| LLM prompts that just say “extract price” are brittle.           | Extracthero asks you to fill an **`ItemToExtract`** dataclass that includes the field’s `name`, `desc`, and optional `text_rules`, so the LLM knows the full context and returns *sniper-accurate* results. |
+| One-shot LLM calls are hard to debug and expensive.              | Two-phase pipeline: **FilterHero** isolates the minimal fragment; **ParseHero** turns it into JSON. Fail fast and retry only the phase that broke.                                                          |
+| Post-hoc validation is messy.                                    | Regex/type guards live inside each `ItemToExtract`; a failed field flips `success=False`, so you can retry or send to manual review.                                                                        |
+
+---
+
+## Key ideas
+
+### 1  Schema-first extraction
+
+```python
+from extracthero import ItemToExtract
+
+price = ItemToExtract(
+    name="price",
+    desc="currency-prefixed current product price",
+    regex_validator=r"€\d+\.\d{2}",
+    text_rules=[
+        "Ignore crossed-out promotional prices.",
+        "Return the live price only."
+    ],
+    example="€49.99"
+)
+```
+
+### 2  DomReducer > HTML→Markdown
+
+* Works directly on the DOM tree.
+* Removes scripts, ads, banners; keeps relevant tags.
+* Shrinks a 40 kB e-commerce page to <3 kB of clean, LLM-ready text.
+
+### 3  Two-phase pipeline
+
+```
+Raw input  ──▶  FilterHero  (shrinks & isolates)  ──▶  ParseHero  (JSON) ──▶  dict + metrics
+```
+
+---
 
 ## Features
 
-- **Multi-modal input**: ingest raw HTML strings, screenshot image files, or paired HTML+image inputs  
-- **Spatial context preservation**: maintain element positions to extract data that depends on layout or visual proximity  
-- **LLM-powered extraction**: plug in your favorite LLM (e.g. OpenAI, Anthropic Claude) for flexible schema-driven parsing  
-- **Optional validation**: enable built-in rules or custom validators to enforce types, ranges and required fields  
-- **Extensible pipeline**: hook into pre- and post-processing steps
+* **Multi-modal input** – raw HTML, JSON, Python dicts, screenshots (vision LLM in roadmap).
+* **Spatial context** – layout coordinates stored so an LLM “sees” element proximity.
+* **LLM-agnostic** – default wrapper targets OpenAI; swap in any `.filter_via_llm` / `.parse_via_llm` service.
+* **Per-field validation** – regex, required/optional, custom lambdas.
+* **Usage metering** – token counts & cost returned with every operation.
+* **Opt-in strictness** – force LLM even for dicts (`enforce_llm_based_*`) or skip HTML reduction (`reduce_html=False`).
+
+---
 
 ## Installation
 
 ```bash
 pip install extracthero
-````
+```
 
+---
 
-## Quickstart
+## Quick-start
 
 ```python
-from extracthero import Extractor, ExtractConfig
+from extracthero import Extractor, ItemToExtract
 
-# 1. Initialize with your LLM backend and schema
-config = ExtractConfig(
-    llm_backend="openai",
-    prompt_template="Extract product titles and prices from the page",
-    validation_enabled=True
-)
-extractor = Extractor(config)
+html = open("product-page.html").read()
 
-# 2a. Extract from raw HTML
-html = "<html>…</html>"
-result_html = extractor.extract_from_html(html)
-print(result_html)
+fields = [
+    ItemToExtract(name="title", desc="product title", example="Wireless Keyboard"),
+    ItemToExtract(
+        name="price",
+        desc="currency-prefixed price",
+        regex_validator=r"€\d+\.\d{2}",
+        example="€49.99"
+    ),
+]
 
-# 2b. Extract from a screenshot
-result_img = extractor.extract_from_screenshot("page.png")
-print(result_img)
+hero   = Extractor()
+result = hero.extract(html, fields, text_type="html")
 
-# 2c. Extract using both HTML + screenshot (preserve layout)
-result_combo = extractor.extract_from_both(html, "page.png")
-print(result_combo)
+print("✅ success:", result.success)
+print(result.parse_op.content)
 ```
 
-## Configuration
+---
 
-| Option               | Type    | Default       | Description                                                   |
-| -------------------- | ------- | ------------- | ------------------------------------------------------------- |
-| `llm_backend`        | `str`   | `"openai"`    | Which LLM to use (“openai”, “anthropic”, etc.)                |
-| `prompt_template`    | `str`   | `None`        | Template guiding the LLM’s extraction instructions            |
-| `validation_enabled` | `bool`  | `False`       | Turn on built-in schema and rule validation                   |
-| `ocr_engine`         | `str`   | `"tesseract"` | OCR engine for screenshot text extraction                     |
-| `spatial_threshold`  | `float` | `0.5`         | Minimum layout-overlap ratio to consider two elements related |
+## Typical HTML workflow
 
-```python
-from extracthero import ExtractConfig
+1. **Scrape or load** the raw HTML.
+2. **DomReducer** trims it to a minimal fragment but keeps required tags.
+3. **FilterHero** sees only that reduced text, calling the LLM once (or per-field) to keep the lines that mention title, price, SKU, etc.
+4. **ParseHero** builds a schema-driven prompt and emits strict JSON.
+5. **Regex guard** – invalid prices (`"129.50"`) are rejected for lacking “€”.
+6. **ExtractOp** bundles both steps plus token/cost metrics for budgeting.
 
-config = ExtractConfig(
-    llm_backend="anthropic",
-    validation_enabled=False,
-    spatial_threshold=0.7
-)
-```
+---
 
-## Validation Logic
+## Roadmap
 
-When `validation_enabled=True`, extracted fields are checked against:
+| Status | Feature                                          |
+| ------ | ------------------------------------------------ |
+| ✅      | Sync FilterHero & ParseHero                      |
+| 🟡     | Async heroes for high-throughput pipelines       |
+| 🟡     | Built-in key\:value fallback parser              |
+| 🟡     | Vision-LLM screenshot mode                       |
+| 🟡     | Pydantic schema-driven auto-prompts & auto-regex |
 
-* **Type rules** (e.g. string, number, date)
-* **Range checks** (e.g. price ≥ 0, date within the last year)
-* **Presence** (required vs. optional fields)
+---
 
-Customize or extend:
-
-```python
-from extracthero.validation import Validator, FieldRule
-
-# custom rule: price must be < 1 000 000
-class PriceRule(FieldRule):
-    def validate(self, value):
-        return isinstance(value, (int, float)) and value < 1_000_000
-
-config.custom_validators = {
-    "price": PriceRule()
-}
-```
-
-## CLI Interface
-
-```bash
-# Extract from HTML file
-extracthero html input.html --schema product_schema.json --output out.json
-
-# Extract from screenshot
-extracthero image page.png --prompt "Get titles" --output out.json
-
-# Combined mode
-extracthero combo input.html page.png --output out.json
-```
-
-Use `extracthero --help` for full options and flags.
-
-## Examples
-
-1. **E-commerce product scraper**
-2. **News article metadata extraction**
-3. **Invoice data capture with layout**
-
-See the [examples/](./examples) folder for ready-to-run demos.
-
-## Contributing
-
-1. Fork the repo
-2. Create a feature branch (`git checkout -b feat/my-feature`)
-3. Implement & test
-4. Submit a pull request
-
-Please follow our [code style guide](./CONTRIBUTING.md) and write tests for new features.
 

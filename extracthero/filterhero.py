@@ -187,6 +187,93 @@ class FilterHero:
             success=success,
             error=error,
         )
+    
+    
+        # ─────────────────────────── public (async) ──────────────────────────
+    async def run_async(
+        self,
+        text: str | Dict[str, Any],
+        items: ItemToExtract | List[ItemToExtract],
+        text_type: Optional[str] = None,
+        filter_separately: bool = False,
+        reduce_html: bool = True,
+        enforce_llm_based_filter: bool = False,
+    ) -> FilterOp:
+        """
+        Async twin of `run()`. Requires `MyLLMService.filter_via_llm_async`.
+        """
+        start_ts = time()
+
+        # 1) preprocess
+        pre = self._prepare_corpus(text, text_type, reduce_html)
+        if pre.error:
+            return self._wrap_filter_op(None, None, pre.reduced_html, False, pre.error, start_ts)
+
+        # 2) dict fast-path unless forced
+        if pre.corpus_type == "json" and not enforce_llm_based_filter:
+            data: Dict[str, Any] = pre.corpus
+            keys = [items.name] if isinstance(items, ItemToExtract) else [it.name for it in items]
+            subset = {k: data.get(k) for k in keys}
+            return self._wrap_filter_op(subset, None, None, True, None, start_ts)
+
+        # 3) ensure string for LLM
+        corpus_for_llm: str = (
+            _json.dumps(pre.corpus, ensure_ascii=False, indent=2)
+            if pre.corpus_type == "json"
+            else str(pre.corpus)
+        )
+        reduced_html = pre.reduced_html
+
+        # 4) dispatch async LLM calls
+        gen_results = await self._dispatch_filter_requests_async(
+            corpus_for_llm, items, filter_separately
+        )
+
+        # 5) success flag
+        ok = (
+            gen_results[0].success
+            if isinstance(items, ItemToExtract) or not filter_separately
+            else all(r.success for r in gen_results)
+        )
+
+        # 6) aggregate
+        content_final, usage_final = self._assemble_filter_results(
+            gen_results, items, filter_separately
+        )
+
+        # 7) wrap
+        return self._wrap_filter_op(
+            content_final, usage_final, reduced_html, ok,
+            None if ok else "LLM filter failed", start_ts
+        )
+
+    # ───────────────────── helper (async dispatch) ─────────────────────
+    async def _dispatch_filter_requests_async(
+        self,
+        corpus: str,
+        items: ItemToExtract | List[ItemToExtract],
+        separate: bool,
+    ) -> List[GenerationResult]:
+        """
+        Same semantics as _dispatch_filter_requests but non-blocking.
+        """
+        item_list = [items] if isinstance(items, ItemToExtract) else items
+
+        # combined prompt (one call)
+        if len(item_list) == 1 or not separate:
+            prompt = "\n\n".join(it.compile() for it in item_list)
+            res = await self.llm.filter_via_llm_async(corpus, prompt)
+            return [res]
+
+        # separate=True & multiple items → gather concurrently
+        import asyncio
+
+        async def one(it: ItemToExtract):
+            return await self.llm.filter_via_llm_async(corpus, it.compile())
+
+        tasks = [asyncio.create_task(one(it)) for it in item_list]
+        return await asyncio.gather(*tasks)
+
 
 
 

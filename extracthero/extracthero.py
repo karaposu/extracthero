@@ -98,6 +98,70 @@ class ExtractHero:
             parse_op=parse_op,
             content=parse_op.content,
         )
+    
+    
+    # ─────────────────── extraction (async) ──────────────────
+    async def extract_async(
+        self,
+        text: str | dict,
+        items: ItemToExtract | List[ItemToExtract],
+        text_type: Optional[str] = None,
+        reduce_html: bool = True,
+        enforce_llm_based_filter: bool = False,
+        filter_separately: bool = False,
+    ) -> ExtractOp:
+        """Async end-to-end pipeline."""
+        filter_op: FilterOp = await self.filter_hero.run_async(
+            text,
+            items,
+            text_type=text_type,
+            filter_separately=filter_separately,
+            reduce_html=reduce_html,
+            enforce_llm_based_filter=enforce_llm_based_filter,
+        )
+
+        if not filter_op.success:
+            parse_op = ParseOp.from_result(
+                config=self.config,
+                content=None,
+                usage=None,
+                start_time=time(),
+                success=False,
+                error="Filter phase failed",
+            )
+            return ExtractOp(filter_op=filter_op, parse_op=parse_op, content=None)
+
+        parse_op = await self._parser_async(filter_op.content, items)
+        return ExtractOp(filter_op=filter_op, parse_op=parse_op, content=parse_op.content)
+
+
+    
+
+
+    # ───────────────────── parse (async) ────────────────────
+    async def _parser_async(
+        self,
+        corpus: str,
+        items: ItemToExtract | List[ItemToExtract],
+    ) -> ParseOp:
+        start_ts = time()
+        prompt = (
+            items.compile()
+            if isinstance(items, ItemToExtract)
+            else "\n\n".join(it.compile() for it in items)
+        )
+        gen = await self.llm.parse_via_llm_async(corpus, prompt)
+        return ParseOp.from_result(
+            config=self.config,
+            content=gen.content if gen.success else None,
+            usage=gen.usage,
+            start_time=start_ts,
+            success=gen.success,
+            error=None if gen.success else "LLM parse failed",
+        )
+
+
+    
 
 
 # ─────────────────────────── simple demo ───────────────────────────

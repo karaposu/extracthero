@@ -24,56 +24,6 @@ class MyLLMService(BaseLLMService):
 
    
     
-    def extract(self, corpus: str, thing_to_extract, output="unstructured" ,model=None,) -> GenerationResult:
-        
-        formatted_prompt = f"""Here is some data relevant to our task : {list_of_classes},
-                            
-                            here is the information {record}
-
-                            Task Description:
-                            Identify the Category: Determine which of the categories the string belongs to.
-                            Extra Information - Helpers:  There might be additional information under each subcategory labeled as 'helpers'. These helpers include descs for the taxonomy,  but
-                            should be considered as extra information and not directly involved in the classification task
-                            Instructions:
-                            Given the string record, first identify the category of the given string using given category list,  (your final answer shouldnt include words like "likely").
-                            Use the 'Helpers' section for additional context.  And also at the end explain your reasoning in a very short way. 
-                            Make sure category is selected from given categories and matches 100%
-                            Examples:
-                            Record: "Jumper Cable"
-                            lvl1: interconnectors
-                            
-                            Record: "STM32"
-                            lvl1: microcontrollers
-                             """
-
-
-        pipeline_config = [
-            {
-                'type': 'SemanticIsolation',
-                'params': {
-                    'semantic_element_for_extraction': 'pure category'
-                }
-            }
-        ]
-
-        if model is None:
-            model= "gpt-4o-mini"
-
-        generation_request = GenerationRequest(
-            formatted_prompt=formatted_prompt,
-            model=model,
-            output_type="str",
-            operation_name="categorize_simple",
-            pipeline_config= pipeline_config,
-            request_id=request_id
-        )
-
-        generation_result = self.execute_generation(generation_request)
-
-    
-        return generation_result
-    
-    
     
     def parse_via_llm(
         self,
@@ -200,6 +150,50 @@ class MyLLMService(BaseLLMService):
         # BaseLLMService already exposes an async runner:
         result = await self.execute_generation_async(generation_request)
         return result
+    
+
+
+        # ────────────────────────── async variant ──────────────────────────
+    async def parse_via_llm_async(
+        self,
+        corpus: str,
+        parse_keywords: list[str] | None = None,
+        model: str | None = None,
+    ) -> GenerationResult:
+        """
+        Non-blocking version of parse_via_llm().
+        Requires BaseLLMService.execute_generation_async.
+        """
+        formatted_prompt = f"""Here is the text corpus relevant to our task:
+            {corpus}
+
+            Here are the keywords to parse:
+            {parse_keywords}
+
+            Task:
+            Convert the corpus into strict JSON with those keys.
+            Do NOT add or remove keys; if information is missing, assign null.
+
+            Return strict JSON only.
+            """
+
+        pipeline_config = [
+            {"type": "ConvertToDict", "params": {}},
+        ]
+
+        model = model or "gpt-4o-mini"
+
+        gen_request = GenerationRequest(
+            formatted_prompt=formatted_prompt,
+            model=model,
+            output_type="str",
+            operation_name="parse_via_llm_async",
+            pipeline_config=pipeline_config,
+        )
+
+        # BaseLLMService supplies execute_generation_async()
+        return await self.execute_generation_async(gen_request)
+
     
 
 

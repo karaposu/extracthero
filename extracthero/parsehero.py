@@ -152,6 +152,94 @@ class ParseHero:
                 if data[it.name] is None or not re.fullmatch(it.regex_validator, str(data[it.name])):
                     return False, f"Field '{it.name}' failed regex validation"
         return True, None
+    
+
+        # ───────────────────────── public (async) ───────────────────────
+    
+    async def run_async(
+        self,
+        corpus: str | Dict[str, Any],
+        items: ItemToExtract | List[ItemToExtract],
+        enforce_llm_based_parse: bool = False,
+    ) -> ParseOp:
+        """
+        Same semantics as `run`, but non-blocking.
+        Requires your `MyLLMService` to expose `parse_via_llm_async`.
+        """
+        start_ts = time()
+
+        # 1. dict fast-path (skip LLM) unless caller forces an LLM parse
+        if isinstance(corpus, dict) and not enforce_llm_based_parse:
+            subset = self._subset_dict(corpus, items)
+            ok, err = self._regex_validate(subset, items)
+            return ParseOp.from_result(
+                config=self.config,
+                content=subset if ok else None,
+                usage=None,
+                start_time=start_ts,
+                success=ok,
+                error=err,
+            )
+
+        # 2. stringify non-str corpora
+        if isinstance(corpus, dict):
+            corpus_str: str = _json.dumps(corpus, ensure_ascii=False, indent=2)
+        elif isinstance(corpus, str):
+            corpus_str = corpus
+        else:
+            return ParseOp.from_result(
+                config=self.config,
+                content=None,
+                usage=None,
+                start_time=start_ts,
+                success=False,
+                error=f"Unsupported corpus type: {type(corpus).__name__}",
+            )
+
+        # 3. prompt
+        prompt = (
+            items.compile()
+            if isinstance(items, ItemToExtract)
+            else "\n\n".join(it.compile() for it in items)
+        )
+
+        # 4. call async LLM
+        gen: GenerationResult = await self.llm.parse_via_llm_async(corpus_str, prompt)
+
+        if not gen.success:
+            return ParseOp.from_result(
+                config=self.config,
+                content=None,
+                usage=gen.usage,
+                start_time=start_ts,
+                success=False,
+                error="LLM parse failed",
+            )
+
+        # 5. decode JSON
+        try:
+            parsed_dict: Dict[str, Any] = _json.loads(gen.content)
+        except Exception:
+            return ParseOp.from_result(
+                config=self.config,
+                content=None,
+                usage=gen.usage,
+                start_time=start_ts,
+                success=False,
+                error="LLM returned non-JSON",
+            )
+
+        # 6. regex validation
+        ok, err = self._regex_validate(parsed_dict, items)
+
+        return ParseOp.from_result(
+            config=self.config,
+            content=parsed_dict if ok else None,
+            usage=gen.usage,
+            start_time=start_ts,
+            success=ok,
+            error=err,
+        )
 
 
 # ────────────────────────── demo ───────────────────────────

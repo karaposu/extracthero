@@ -1,4 +1,4 @@
-# extracthero.py
+# extracthero/extracthero.py
 # run with: python -m extracthero.extracthero
 
 from __future__ import annotations

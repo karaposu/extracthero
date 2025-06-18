@@ -1,4 +1,4 @@
-# filterhero.py
+# extracthero/filterhero.py
 
 # run with: python -m extracthero.filterhero
 """
@@ -111,7 +111,7 @@ class FilterHero:
             if reduce_html:
                 op = HtmlReducer(str(text)).reduce()
 
-                print("reducement_details: ", op.reducement_details)
+                # print("reducement_details: ", op.reducement_details)
 
                 return CorpusPayload(
                     corpus=op.reduced_data if op.success else str(text),

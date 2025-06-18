@@ -1,4 +1,4 @@
-# parsehero.py
+# extracthero/parsehero.py
 # run with: python -m extracthero.parsehero
 
 

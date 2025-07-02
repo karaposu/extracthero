@@ -64,7 +64,7 @@ class FilterHero:
         End-to-end filter phase.
         """
         ts = time()
-
+       
         # 1) Pre-process (HTML reduction / JSON parsing / pass-through)
         payload = self._prepare_corpus(text, text_type, reduce_html)
         if payload.error:

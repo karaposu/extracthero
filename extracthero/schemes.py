@@ -249,8 +249,8 @@ class FilterOp:
         content: Any,
         usage: Optional[Dict[str, Any]],
         reduced_html: Optional[str],
-        html_reduce_op: Optional[Any],            # ← new param
         start_time: float,
+        html_reduce_op: Optional[Any] = None ,
         success: bool = True,
         error: Optional[str] = None
     ) -> "FilterOp":

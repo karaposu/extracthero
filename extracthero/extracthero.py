@@ -167,7 +167,7 @@ class ExtractHero:
 # ─────────────────────────── simple demo ───────────────────────────
 def main() -> None:
     extractor = ExtractHero()
-
+   
     # define what to extract
     items = [
         ItemToExtract(
@@ -182,7 +182,7 @@ def main() -> None:
             example="€49.99",
         ),
     ]
-
+    
     sample_html = """
     <html><body>
       <div class="product">

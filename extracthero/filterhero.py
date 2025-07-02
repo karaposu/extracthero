@@ -1,29 +1,45 @@
 # extracthero/filterhero.py
-
-# run with: python -m extracthero.filterhero
+# run with:  python -m extracthero.filterhero
 """
 FilterHero — the “filter” phase of ExtractHero.
-  • Normalises raw input (HTML / JSON / dict / plain text).
-  • Optionally reduces HTML to visible text.
-  • Fast-path key extraction for JSON/dict, unless `enforce_llm_based_filter=True`.
-  • Otherwise builds LLM-prompts (combined or per-field) and returns a FilterOp.
+• Normalises raw input (HTML / JSON / dict / plain-text).
+• Optionally reduces HTML to visible text.
+• Uses a JSON fast-path when possible; otherwise builds LLM prompts.
 """
 
 from __future__ import annotations
 
+import json as _json
+from dataclasses import dataclass
 from time import time
 from typing import Any, Dict, List, Optional, Tuple, Union
 
 from llmservice import GenerationResult
 from extracthero.myllmservice import MyLLMService
-from extracthero.schemes import ExtractConfig, FilterOp, ItemToExtract, CorpusPayload
+from extracthero.schemes import (
+    ExtractConfig,
+    FilterOp,
+    CorpusPayload,   
+    WhatToRetain, 
+    ProcessResult
+)
+
 from domreducer import HtmlReducer
 from string2dict import String2Dict
-import json as _json  # used only when we need to stringify dicts for LLM
+from extracthero.utils import load_html
 
 
+import warnings
+warnings.filterwarnings(
+    "ignore",
+    category=RuntimeWarning,
+    message=".*extracthero.filterhero.*"
+)
+
+
+
+# ─────────────────────────────────────────────────────────────────────────────
 class FilterHero:
-    # ─────────────────────────────── init ────────────────────────────────
     def __init__(
         self,
         config: Optional[ExtractConfig] = None,
@@ -32,129 +48,186 @@ class FilterHero:
         self.config = config or ExtractConfig()
         self.llm = llm or MyLLMService()
 
-    # ─────────────────────────────── public ──────────────────────────────
+        self.html_reducer_op=None
+
+    # ──────────────────────── public orchestrator ────────────────────────
     def run(
         self,
         text: str | Dict[str, Any],
-        items: ItemToExtract | List[ItemToExtract],
+        items: WhatToRetain | List[WhatToRetain],
         text_type: Optional[str] = None,
         filter_separately: bool = False,
         reduce_html: bool = True,
         enforce_llm_based_filter: bool = False,
     ) -> FilterOp:
         """
-        Parameters
-        ----------
-        text   : raw HTML / JSON string / dict / plain text
-        items  : one or many ItemToExtract
-        text_type : "html" | "json" | "dict" | None (auto=text)
-        filter_separately : run one LLM call per item (True) or combined (False)
-        reduce_html : when text_type="html", strip to visible text if True
-        enforce_llm_based_filter : even for JSON/dict, stringify & send to LLM
+        End-to-end filter phase.
         """
-        start_ts = time()
+        ts = time()
 
-        # 1. preprocess once
-        pre = self._prepare_corpus(text, text_type, reduce_html)
-        if pre.error:
-            return self._wrap_filter_op(None, None, pre.reduced_html, False, pre.error, start_ts)
+        # 1) Pre-process (HTML reduction / JSON parsing / pass-through)
+        payload = self._prepare_corpus(text, text_type, reduce_html)
+        if payload.error:
+            return FilterOp.from_result(
+                config=self.config,
+                content=None,
+                usage=None,
+                reduced_html=payload.reduced_html,
+                start_time=ts,
+                success=False,
+             
+                error=payload.error,
+            )
 
-        # 2. JSON/dict fast-path (skip LLM) unless user forces LLM route
-        if pre.corpus_type == "json" and not enforce_llm_based_filter:
-            data: Dict[str, Any] = pre.corpus  # already a dict
-            keys = [items.name] if isinstance(items, ItemToExtract) else [it.name for it in items]
-            subset = {k: data.get(k) for k in keys}
-            return self._wrap_filter_op(subset, None, None, True, None, start_ts)
-
-        # 3. Build text for LLM (stringify dict if needed)
-        if pre.corpus_type == "json":                     # && enforce=True
-            corpus_for_llm: str = _json.dumps(pre.corpus, ensure_ascii=False, indent=2)
-        else:
-            corpus_for_llm: str = pre.corpus              # already str
-        reduced_html = pre.reduced_html                  # may be None
-
-        # 4. Dispatch LLM filter calls
-        gen_results = self._dispatch_filter_requests(
-            corpus=corpus_for_llm,
-            items=items,
-            separate=filter_separately,
+        # 2) Handle JSON fast-path or stringify payload for LLM
+        proc = self.process_corpus_payload(
+            payload, items, enforce_llm_based_filter, ts
         )
+        if proc.fast_op is not None:                     # shortcut hit
+            return proc.fast_op
 
-        # 5. Determine overall success
+        # 3) Dispatch LLM calls
+        gen_results = self._dispatch(proc.corpus, items, filter_separately)
+
+        # 4) Success flag
         ok = (
             gen_results[0].success
-            if isinstance(items, ItemToExtract) or not filter_separately
+            if isinstance(items, WhatToRetain) or not filter_separately
             else all(r.success for r in gen_results)
         )
 
-        # 6. Assemble content & usage
-        content_final, usage_final = self._assemble_filter_results(gen_results, items, filter_separately)
+        # 5) Aggregate content + usage
+        content, usage = self._aggregate(gen_results, items, filter_separately)
 
-        # 7. Wrap FilterOp
-        return self._wrap_filter_op(
-            content_final,
-            usage_final,
-            reduced_html,
-            ok,
-            None if ok else "LLM filter failed",
-            start_ts,
+        # 6) Wrap & return
+        return FilterOp.from_result(
+            config=self.config,
+            content=content,
+            usage=usage,
+            reduced_html=proc.reduced,
+            html_reduce_op=self.html_reducer_op,
+            start_time=ts,
+            success=ok,
+
+            error=None if ok else "LLM filter failed",
         )
 
-    # ──────────────────────────── helpers ──────────────────────────────
+    # ─────────────────────── helper: preprocessing ───────────────────────
     def _prepare_corpus(
         self,
         text: str | Dict[str, Any],
         text_type: Optional[str],
         reduce_html: bool,
     ) -> CorpusPayload:
+        """Return CorpusPayload(corpus, corpus_type, reduced_html, error)"""
+
+        # HTML branch
         if text_type == "html":
             if reduce_html:
                 op = HtmlReducer(str(text)).reduce()
-
-                # print("reducement_details: ", op.reducement_details)
-
+                
+                self.html_reducer_op=op
                 return CorpusPayload(
                     corpus=op.reduced_data if op.success else str(text),
                     corpus_type="html",
                     reduced_html=op.reduced_data if op.success else None,
+                
                 )
             return CorpusPayload(corpus=str(text), corpus_type="html", reduced_html=None)
 
+        # JSON branch
         if text_type == "json":
             parsed = String2Dict().run(str(text))
             if parsed is None:
-                return CorpusPayload(corpus=None, corpus_type="json", reduced_html=None, error="Invalid JSON input")
+                return CorpusPayload(
+                    corpus=None,
+                    corpus_type="json",
+                    reduced_html=None,
+
+                    error="Invalid JSON input",
+                )
             return CorpusPayload(corpus=parsed, corpus_type="json", reduced_html=None)
 
+        # dict branch
         if text_type == "dict":
             if not isinstance(text, dict):
-                return CorpusPayload(corpus=None, corpus_type="json", reduced_html=None, error="dict type mismatch")
+                return CorpusPayload(
+                    corpus=None,
+                    corpus_type="json",
+                    reduced_html=None,
+                    error="dict type mismatch",
+                )
             return CorpusPayload(corpus=text, corpus_type="json", reduced_html=None)
 
-        # default: plain text
+        # plain text branch
         return CorpusPayload(corpus=str(text), corpus_type="text", reduced_html=None)
 
-    # ------------------------------------------------------------------
-    def _dispatch_filter_requests(
+    # ───────────── helper: JSON shortcut or corpus stringification ─────────────
+    def process_corpus_payload(
         self,
-        corpus: str,
-        items: ItemToExtract | List[ItemToExtract],
+        payload: CorpusPayload,
+        items: WhatToRetain | List[WhatToRetain],
+        enforce_llm: bool,
+        ts: float,
+    ) -> ProcessResult:
+        """
+        • If JSON and not forced → return FilterOp shortcut.  
+        • Else → make sure corpus is a *string* for LLM.
+        """
+        # JSON / dict
+        if payload.corpus_type == "json":
+            data: Dict[str, Any] = payload.corpus  # already dict
+
+            if not enforce_llm:
+                keys = (
+                    [items.name]
+                    if isinstance(items, WhatToRetain)
+                    else [it.name for it in items]
+                )
+                subset = {k: data.get(k) for k in keys}
+                fast = FilterOp.from_result(
+                    config=self.config,
+                    content=subset,
+                    usage=None,
+                    reduced_html=None,
+                    start_time=ts,
+                    success=True,
+                  
+                    error=None,
+                )
+                return ProcessResult(fast, None, None)
+
+            # fallback: stringify dict for LLM
+            return ProcessResult(None, self._stringify_json(data), None)
+
+        # HTML / text
+        return ProcessResult(None, str(payload.corpus), payload.reduced_html)
+
+    # ───────────── helper: dispatch to LLM ─────────────
+    def _dispatch(
+        self,
+        corpus_str: str,
+        items: WhatToRetain | List[WhatToRetain],
         separate: bool,
     ) -> List[GenerationResult]:
-        it_list = [items] if isinstance(items, ItemToExtract) else items
+        it_list = [items] if isinstance(items, WhatToRetain) else items
         if len(it_list) == 1 or not separate:
             prompt = "\n\n".join(it.compile() for it in it_list)
-            return [self.llm.filter_via_llm(corpus, prompt)]
-        return [self.llm.filter_via_llm(corpus, it.compile()) for it in it_list]
+            return [self.llm.filter_via_llm(corpus_str, prompt)]
 
-    # ------------------------------------------------------------------
-    def _assemble_filter_results(
+        return [
+            self.llm.filter_via_llm(corpus_str, it.compile()) for it in it_list
+        ]
+
+    # ───────────── helper: aggregate results ─────────────
+    def _aggregate(
         self,
         gen_results: List[GenerationResult],
-        items: ItemToExtract | List[ItemToExtract],
+        items: WhatToRetain | List[WhatToRetain],
         separate: bool,
     ) -> Tuple[Any, Optional[Dict[str, int]]]:
-        if isinstance(items, ItemToExtract) or not separate:
+
+        if isinstance(items, WhatToRetain) or not separate:
             first = gen_results[0]
             return first.content, first.usage
 
@@ -166,141 +239,96 @@ class FilterHero:
             if r.usage:
                 for k, v in r.usage.items():
                     usage_tot[k] = usage_tot.get(k, 0) + v
-        return content_map, (usage_tot or None)
+        return content_map, usage_tot or None
 
-    # ------------------------------------------------------------------
-    def _wrap_filter_op(
-        self,
-        content: Any,
-        usage: Optional[Dict[str, Any]],
-        reduced_html: Optional[str],
-        success: bool,
-        error: Optional[str],
-        start_ts: float,
-    ) -> FilterOp:
-        return FilterOp.from_result(
-            config=self.config,
-            content=content,
-            usage=usage,
-            reduced_html=reduced_html,
-            start_time=start_ts,
-            success=success,
-            error=error,
-        )
+    # ───────────── helper: JSON→string ─────────────
+    @staticmethod
+    def _stringify_json(data: Dict[str, Any]) -> str:
+        return _json.dumps(data, ensure_ascii=False, indent=2)
     
-    
-        # ─────────────────────────── public (async) ──────────────────────────
-    async def run_async(
-        self,
-        text: str | Dict[str, Any],
-        items: ItemToExtract | List[ItemToExtract],
-        text_type: Optional[str] = None,
-        filter_separately: bool = False,
-        reduce_html: bool = True,
-        enforce_llm_based_filter: bool = False,
-    ) -> FilterOp:
-        """
-        Async twin of `run()`. Requires `MyLLMService.filter_via_llm_async`.
-        """
-        start_ts = time()
-
-        # 1) preprocess
-        pre = self._prepare_corpus(text, text_type, reduce_html)
-        if pre.error:
-            return self._wrap_filter_op(None, None, pre.reduced_html, False, pre.error, start_ts)
-
-        # 2) dict fast-path unless forced
-        if pre.corpus_type == "json" and not enforce_llm_based_filter:
-            data: Dict[str, Any] = pre.corpus
-            keys = [items.name] if isinstance(items, ItemToExtract) else [it.name for it in items]
-            subset = {k: data.get(k) for k in keys}
-            return self._wrap_filter_op(subset, None, None, True, None, start_ts)
-
-        # 3) ensure string for LLM
-        corpus_for_llm: str = (
-            _json.dumps(pre.corpus, ensure_ascii=False, indent=2)
-            if pre.corpus_type == "json"
-            else str(pre.corpus)
-        )
-        reduced_html = pre.reduced_html
-
-        # 4) dispatch async LLM calls
-        gen_results = await self._dispatch_filter_requests_async(
-            corpus_for_llm, items, filter_separately
-        )
-
-        # 5) success flag
-        ok = (
-            gen_results[0].success
-            if isinstance(items, ItemToExtract) or not filter_separately
-            else all(r.success for r in gen_results)
-        )
-
-        # 6) aggregate
-        content_final, usage_final = self._assemble_filter_results(
-            gen_results, items, filter_separately
-        )
-
-        # 7) wrap
-        return self._wrap_filter_op(
-            content_final, usage_final, reduced_html, ok,
-            None if ok else "LLM filter failed", start_ts
-        )
-
-    # ───────────────────── helper (async dispatch) ─────────────────────
-    async def _dispatch_filter_requests_async(
-        self,
-        corpus: str,
-        items: ItemToExtract | List[ItemToExtract],
-        separate: bool,
-    ) -> List[GenerationResult]:
-        """
-        Same semantics as _dispatch_filter_requests but non-blocking.
-        """
-        item_list = [items] if isinstance(items, ItemToExtract) else items
-
-        # combined prompt (one call)
-        if len(item_list) == 1 or not separate:
-            prompt = "\n\n".join(it.compile() for it in item_list)
-            res = await self.llm.filter_via_llm_async(corpus, prompt)
-            return [res]
-
-        # separate=True & multiple items → gather concurrently
-        import asyncio
-
-        async def one(it: ItemToExtract):
-            return await self.llm.filter_via_llm_async(corpus, it.compile())
-
-        tasks = [asyncio.create_task(one(it)) for it in item_list]
-        return await asyncio.gather(*tasks)
 
 
 
+wrt_to_source_filter_desc="""
+### Task
+Return **every content chunk** that is relevant to the main product
+described in the page’s hero section.
 
-def main() -> None:
+### How to decide relevance
+1. **Keep** a chunk if its title, brand, or descriptive text
+   • matches the hero product **or**
+   • is ambiguous / generic enough that it _could_ be the hero product.
+2. **Discard** a chunk **only when** there is a **strong, explicit** signal
+   that it belongs to a _different_ item (e.g. totally different brand,
+   unrelated product type, “customers also bought” label).
+3. When in doubt, **keep** the chunk (favor recall).
+
+### Output
+Return the retained chunks exactly as HTML snippets.
+""".strip()
+
+
+# ─────────────────────────────── demo ───────────────────────────────
+if __name__ == "__main__":
     cfg = ExtractConfig()
-    hero = FilterHero(cfg)
-
-    items = [
-        ItemToExtract(name="title", desc="Product title", example="Wireless Keyboard"),
-        ItemToExtract(name="price", desc="Product price", regex_validator=r"€\d+\.\d{2}", example="€49.99"),
+    filter_hero = FilterHero(cfg)
+    
+    specs = [
+        WhatToRetain(
+            name="products",
+            # desc="product  including title and price",
+            wrt_to_source_filter_desc=wrt_to_source_filter_desc,
+            include_context_chunk=False,
+            # text_rules=[
+            #     "productlar cok buyuk olmasin "
+            # ]
+        )
     ]
 
-    html_doc = """
-    <html><body>
-      <div class="product"><h2 class="title">Wireless Keyboard</h2><span class="price">€49.99</span></div>
-      <div class="product"><h2 class="title">USB-C Hub</h2><span class="price">€29.50</span></div>
-      <div class="product"><h2 class="title">ABCHS</h2><span class="price">$129.50</span></div>
-      <div class="product"><h2 class="title">enes</h2><span class="weight">129.50</span></div>
-    </body></html>
-    """
+    # HowToParse
 
-    f_op = hero.run(html_doc, items, text_type="html")
-    print("Filtered corpus:\n", f_op.content)
-    print("Success:", f_op.success)
-    if f_op.usage:
-        print("Usage:", f_op.usage)
+    # html_doc = """
+    # <html><body>
+    #   <div class="product"><h2 class="title">Wireless Keyboard</h2><span class="price">€49.99</span></div>
+    #   <div class="product"><h2 class="title">USB-C Hub</h2><span class="price">€29.50</span></div>
+    # </body></html>
+    # """
+
+   
+    html_doc = load_html("extracthero/simple_html_sample_2.html")
+
+  
+    filter_op = filter_hero.run(html_doc, specs, text_type="html")
+    # filter_op = filter_hero.run(html_doc, specs, text_type="html", reduce_html=False)
+
+ 
+    
+    print("Reduced_html")
+    print(" ")
+    print(filter_op.reduced_html)
+
+    print(" ")
+    print("reducement_details: ")
+    print(filter_op.html_reduce_op.reducement_details)
+    print(" ")
+    
+    print(" ")
+    print("token_reducement_percentage: ")
+    print(filter_op.html_reduce_op.token_reducement_percentage)
+    print(" ")
+    
+    
+    
+
+    print("Filtered corpus: ⬇")
+    print(" ")
+    print(filter_op.content)
+
+    
+
+    # print(" ")
+    # print("Success:", filter_op.success)
 
 
-if __name__ == "__main__":
-    main()
+
+# Entity

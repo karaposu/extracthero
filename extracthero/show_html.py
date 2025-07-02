@@ -1,5 +1,7 @@
 # show_html.py
 
+# python show_html.py
+
 import webbrowser
 import tempfile
 import os

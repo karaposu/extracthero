@@ -54,51 +54,54 @@ class MyLLMService(BaseLLMService):
 
         # """
         
-        formatted_prompt=f"""
+        # formatted_prompt=f"""
 
-                Parse the given text corpus into strict JSON using only the strings provided in `explicit_dict_keywords`. Follow these rules exactly:
+        #         Parse the given text corpus into strict JSON using only the strings provided in `explicit_dict_keywords`. Follow these rules exactly:
 
-                1. **Use Only `explicit_dict_keywords`**: Use exactly the strings in `explicit_dict_keywords` as the JSON property names — no synonyms or variants.  
-                2. **No Extra Properties**: Do not add, remove, rename, or normalize any properties beyond those in `explicit_dict_keywords`.  
-                3. **Flat Structure**: Never create nested objects or sub-dictionaries. All properties must live at the top level of each record.  
-                4. **Missing Values**: If a property from `explicit_dict_keywords` does not appear in the corpus, include it with the value `null`.  
-                5. **Multiple Records**: If the corpus contains multiple independent sets of data for these properties, output a JSON array of objects—one object per set.  
-                6. **No Inference**: Do not infer, invent, or normalize any new information.  
-                7. **Strict JSON**: Output must be valid JSON (no comments, no trailing commas).
+        #         1. **Use Only `explicit_dict_keywords`**: Use exactly the strings in `explicit_dict_keywords` as the JSON property names — no synonyms or variants.  
+        #         2. **No Extra Properties**: Do not add, remove, rename, or normalize any properties beyond those in `explicit_dict_keywords`.  
+        #         3. **Flat Structure**: Never create nested objects or sub-dictionaries. All properties must live at the top level of each record.  
+        #         4. **Missing Values**: If a property from `explicit_dict_keywords` does not appear in the corpus, include it with the value `null`.  
+        #         5. **Multiple Records**: If the corpus contains multiple independent sets of data for these properties, output a JSON array of objects—one object per set.  
+        #         6. **No Inference**: Do not infer, invent, or normalize any new information.  
+        #         7. **Strict JSON**: Output must be valid JSON (no comments, no trailing commas).
 
-                **Input Variables**  
-                -  Here is the text corpus {corpus}  
-                - Here is explicit_dict_keywords   {parse_keywords}
+        #         **Input Variables**  
+        #         -  Here is the text corpus {corpus}  
+        #         - Here is explicit_dict_keywords   {parse_keywords}
 
-                Give the output in JSON format , explicit_dict_keywords as key and then result 'result_here' 
+        #         Give the output in JSON format , explicit_dict_keywords as key and then result 'result_here' 
 
+
+        # """
+
+
+
+
+
+        
+        formatted_prompt = f"""
+Here is the text corpus relevant to our task:
+{corpus}
+
+Here is explicit_dict_keywords which should be used for parsing:
+{parse_keywords}
+
+Task Description:
+Your job is to parse the text into a json format using given explicit_dict_keywords and NOT ANYTHING ELSE. 
+Do NOT add or remove or normalize information. ALSO NEVER impute new fields if related corpus dont have them. Your job is parsing. 
+IF there is no information regarding any explicit_dict_keywords, you must put it's value as None 
+
+If corpus includes  multiple isolated keyword related content, output a list of dict with given keyword. Omit: Do not generate a key in your output JSON when the source text lacked that key.
+ALSO do not add any extra keys or layers other than given explicit_dict_keywords
+
+During parsing only use given designated explicit_dict_keywords 
+
+
+
+Give the output in strict JSON format without HTML TAGS
 
         """
-
-
-
-
-
-        
-        formatted_prompt = f"""Here is the text corpus relevant to our task:
-                            {corpus}
-        
-                            Here is explicit_dict_keywords which should be used for parsing:
-                            {parse_keywords}
-                            
-                            Task Description:
-                            Your job is to parse the text into a json format using given explicit_dict_keywords and NOT ANYTHING ELSE. 
-                            Do NOT add or remove or normalize information. ALSO NEVER impute new fields if related corpus dont have them. Your job is parsing. 
-                            IF there is no information regarding any keyword, you must put it's value as None 
-
-                            If corpus includes  multiple isolated keyword related content, output a list of dict with given keyword. Omit: Do not generate a key in your output JSON when the source text lacked that key.
-                            ALSO do not add any extra keys or layers other than given keywords
-
-                            During parsing only use give designated keywords 
-                            
-                            Give the output in strict JSON format
-                            
-                            """
         
         pipeline_config = [
             {

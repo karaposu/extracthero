@@ -54,7 +54,7 @@ class FilterHero:
     def run(
         self,
         text: str | Dict[str, Any],
-        items: WhatToRetain | List[WhatToRetain],
+        extraction_spec: WhatToRetain | List[WhatToRetain],
         text_type: Optional[str] = None,
         filter_separately: bool = False,
         reduce_html: bool = True,
@@ -81,23 +81,23 @@ class FilterHero:
 
         # 2) Handle JSON fast-path or stringify payload for LLM
         proc = self.process_corpus_payload(
-            payload, items, enforce_llm_based_filter, ts
+            payload, extraction_spec, enforce_llm_based_filter, ts
         )
         if proc.fast_op is not None:                     # shortcut hit
             return proc.fast_op
 
         # 3) Dispatch LLM calls
-        gen_results = self._dispatch(proc.corpus, items, filter_separately)
+        gen_results = self._dispatch(proc.corpus, extraction_spec, filter_separately)
 
         # 4) Success flag
         ok = (
             gen_results[0].success
-            if isinstance(items, WhatToRetain) or not filter_separately
+            if isinstance(extraction_spec, WhatToRetain) or not filter_separately
             else all(r.success for r in gen_results)
         )
 
         # 5) Aggregate content + usage
-        content, usage = self._aggregate(gen_results, items, filter_separately)
+        content, usage = self._aggregate(gen_results, extraction_spec, filter_separately)
 
         # 6) Wrap & return
         return FilterOp.from_result(

@@ -32,43 +32,6 @@ from typing import List, Optional
 
 
 
-@dataclass
-class ItemToExtract:
-    name: str                                  # e.g. "price"
-    desc: Optional[str] = None                 # human-readable description
-    regex_validator: Optional[str] = None      # format guard
-    text_rules: List[str] = field(default_factory=list)
-    example: Optional[str] = None
-
-    # ───────────── context options ─────────
-    include_context_chunk: bool = False        # keep the entire semantic chunk?
-    custom_context_chunk_desc: Optional[str] = None
-    # if set, guides the LLM on how to pick the surrounding context chunk;
-    # if None, the LLM decides boundaries automatically
-
-    def compile(self) -> str:
-        sections: List[str] = [f"Field name: {self.name}"]
-
-        if self.desc:
-            sections.append(f"Field description: {self.desc}")
-
-        if self.text_rules:
-            sections.append("Text rules: " + "; ".join(self.text_rules))
-
-        if self.example:
-            sections.append(f"Example: {self.example}")
-
-        if self.include_context_chunk:
-            guidance = (
-                self.custom_context_chunk_desc
-                or "Include the full semantic context block that belongs "
-                   "to this field (e.g., the <div class='product'> element)."
-            )
-            sections.append(f"Context guidance: {guidance}")
-
-        return "\n".join(sections)
-    
-
 
 @dataclass
 class WhatToRetain:
@@ -112,9 +75,14 @@ class WhatToRetain:
     
     # ───────── context targeting ────
     identifier_context_contradiction_check: bool = False
-
+    
     # ───────── extra rules ──────────
     text_rules: Optional[List[str]] = None
+
+    regex_validator: Optional[str] = None      # format guard
+
+    # example
+    example: Optional[str] = None
 
     # ─────── prompt builder ────────
     def compile(self) -> str:
@@ -122,6 +90,10 @@ class WhatToRetain:
 
         if self.desc:
             parts.append(f"Description: {self.desc}")
+
+        if self.example:
+            parts.append(f"Example: {self.example}")
+
 
         if self.include_context_chunk:
             ctx = (
@@ -134,6 +106,8 @@ class WhatToRetain:
             parts.append(
                 f"Relevance hint w.r.t. page source: {self.wrt_to_source_filter_desc}"
             )
+
+        
 
         if self.identifier_context_contradiction_check:
             parts.append(
@@ -167,6 +141,49 @@ class WhatToRetain:
             parts.append("Additional rules: " + "; ".join(self.text_rules))
 
         return "\n".join(parts)
+    
+
+
+
+
+
+
+
+@dataclass
+class ItemToExtract:
+    name: str                                  # e.g. "price"
+    desc: Optional[str] = None                 # human-readable description
+    regex_validator: Optional[str] = None      # format guard
+    text_rules: List[str] = field(default_factory=list)
+    example: Optional[str] = None
+
+    # ───────────── context options ─────────
+    include_context_chunk: bool = False        # keep the entire semantic chunk?
+    custom_context_chunk_desc: Optional[str] = None
+    # if set, guides the LLM on how to pick the surrounding context chunk;
+    # if None, the LLM decides boundaries automatically
+
+    def compile(self) -> str:
+        sections: List[str] = [f"Field name: {self.name}"]
+
+        if self.desc:
+            sections.append(f"Field description: {self.desc}")
+
+        if self.text_rules:
+            sections.append("Text rules: " + "; ".join(self.text_rules))
+
+        if self.example:
+            sections.append(f"Example: {self.example}")
+
+        if self.include_context_chunk:
+            guidance = (
+                self.custom_context_chunk_desc
+                or "Include the full semantic context block that belongs "
+                   "to this field (e.g., the <div class='product'> element)."
+            )
+            sections.append(f"Context guidance: {guidance}")
+
+        return "\n".join(sections)
     
 
 

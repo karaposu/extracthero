@@ -12,9 +12,10 @@ from extracthero.schemes import (
     ExtractOp,
     FilterOp,
     ParseOp,
-    ItemToExtract,
+    WhatToRetain,
 )
 from extracthero.filterhero import FilterHero
+from extracthero.utils import load_html
 
 
 class ExtractHero:
@@ -29,12 +30,12 @@ class ExtractHero:
     def _parser(
         self,
         corpus: str,
-        items: ItemToExtract | List[ItemToExtract],
+        items: WhatToRetain | List[WhatToRetain],
     ) -> ParseOp:
         start_ts = time()
         prompt = (
             items.compile()
-            if isinstance(items, ItemToExtract)
+            if isinstance(items, WhatToRetain)
             else "\n\n".join(it.compile() for it in items)
         )
         gen = self.llm.parse_via_llm(corpus, prompt)
@@ -47,11 +48,11 @@ class ExtractHero:
             error=None if gen.success else "LLM parse failed",
         )
 
-    # ─────────────────────────── public API ──────────────────────────
+    
     def extract(
         self,
         text: str | dict,
-        items: ItemToExtract | List[ItemToExtract],
+        extraction_spec: WhatToRetain | List[WhatToRetain],
         text_type: Optional[str] = None,
         reduce_html: bool = True,
         enforce_llm_based_filter: bool = False,
@@ -72,7 +73,7 @@ class ExtractHero:
         # Phase-1: filtering
         filter_op: FilterOp = self.filter_hero.run(
             text,
-            items,
+            extraction_spec,
             text_type=text_type,
             filter_separately=filter_separately,
             reduce_html=reduce_html,
@@ -92,7 +93,7 @@ class ExtractHero:
             return ExtractOp(filter_op=filter_op, parse_op=parse_op, content=None)
 
         # Phase-2: parsing
-        parse_op = self._parser(filter_op.content, items)
+        parse_op = self._parser(filter_op.content, extraction_spec)
         return ExtractOp(
             filter_op=filter_op,
             parse_op=parse_op,
@@ -104,7 +105,7 @@ class ExtractHero:
     async def extract_async(
         self,
         text: str | dict,
-        items: ItemToExtract | List[ItemToExtract],
+        items: WhatToRetain | List[WhatToRetain],
         text_type: Optional[str] = None,
         reduce_html: bool = True,
         enforce_llm_based_filter: bool = False,
@@ -142,12 +143,12 @@ class ExtractHero:
     async def _parser_async(
         self,
         corpus: str,
-        items: ItemToExtract | List[ItemToExtract],
+        items: WhatToRetain | List[WhatToRetain],
     ) -> ParseOp:
         start_ts = time()
         prompt = (
             items.compile()
-            if isinstance(items, ItemToExtract)
+            if isinstance(items, WhatToRetain)
             else "\n\n".join(it.compile() for it in items)
         )
         gen = await self.llm.parse_via_llm_async(corpus, prompt)
@@ -161,25 +162,46 @@ class ExtractHero:
         )
 
 
+
+
+wrt_to_source_filter_desc="""
+### Task
+Return **every content chunk** that is relevant to the main product
+described in the page’s hero section.
+
+### How to decide relevance
+1. **Keep** a chunk if its title, brand, or descriptive text
+   • matches the hero product **or**
+   • is ambiguous / generic enough that it _could_ be the hero product.
+2. **Discard** a chunk **only when** there is a **strong, explicit** signal
+   that it belongs to a _different_ item (e.g. totally different brand,
+   unrelated product type, “customers also bought” label).
+3. When in doubt, **keep** the chunk (favor recall).
+
+### Output
+Return the retained chunks exactly as HTML snippets.
+""".strip()
     
 
 
 # ─────────────────────────── simple demo ───────────────────────────
 def main() -> None:
     extractor = ExtractHero()
-   
+    
     # define what to extract
     items = [
-        ItemToExtract(
+        WhatToRetain(
             name="title",
             desc="Product title",
             example="Wireless Keyboard",
+           # wrt_to_source_filter_desc=wrt_to_source_filter_desc
         ),
-        ItemToExtract(
+        WhatToRetain(
             name="price",
             desc="Product price with currency symbol",
-            regex_validator=r"€\d+\.\d{2}",
+            # regex_validator=r"€\d+\.\d{2}",
             example="€49.99",
+            wrt_to_source_filter_desc=wrt_to_source_filter_desc
         ),
     ]
     
@@ -196,7 +218,12 @@ def main() -> None:
     </body></html>
     """
     
-    op = extractor.extract(sample_html, items, text_type="html")
+
+   
+    html_doc = load_html("extracthero/simple_html_sample_2.html")
+    
+    # op = extractor.extract(sample_html, items, text_type="html")
+    op = extractor.extract(html_doc, items, text_type="html")
     print("Filtered corpus:\n", op.filter_op.content)
     print("Parsed result:\n", op.parse_op.content)
 

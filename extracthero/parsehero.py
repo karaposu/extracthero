@@ -255,47 +255,73 @@ def main() -> None:
 
     # result dict should have a field called product 
     items = [
-        WhatToRetain(name="product", desc="Product info"),
-        # WhatToRetain(name="price", desc="Product price"),
+       #WhatToRetain(name="product", desc="Product info in plain text format, not json, DO NOT JSONIFY THIS PART!"),
+       
+        #  WhatToRetain(name="product", desc="Product title"),
+
+         WhatToRetain(name="product_title", desc="Product title"),
+         WhatToRetain(name="product_rating", desc="Product rating"),
+        #  WhatToRetain(name="product_title"),
+        # WhatToRetain(name="product", desc="Product info in SEO friendly format"),
+
+        #   WhatToRetain(name="product", desc="Product info" , text_rules=["SEO friendly format plain text"]),
+        #  WhatToRetain(name="SEO_mistakes", desc="Product price"),
     ]
     
-   
+    # 'product': title is Wireless Keyboard Pro and  price: €49.99,  list-price: €59.99,  rating: 4.5 ★  the availability: In Stock
+
+    
+
+
+    # filtered_text = """
+    #     title: Wireless Keyboard Pro and  price: €49.99
+    #     list-price: €59.99
+    #     rating: 4.5 ★  the availability: In Stock
+    #     delivery: Free next-day
+    #     ---
+    #     title: USB-C Hub (6-in-1)
+    #     price: €29.50
+    #     availability: Only 3 left!
+    #     rating: 4.1 ★
+    #     ---
+    #     title: Gaming Mouse XT-8 and list_price: $42.00
+    #     price: $35.00
+    #     availability: Out of Stock
+    #     warranty: 2-year limited
+    #     ---
+    #     title: Luggage Big 65 L
+    #     availability: Pre-order (ships in 3 weeks)
+    #     rating: 4.8 ★
+    #     """
+    
     filtered_text = """
         title: Wireless Keyboard Pro and  price: €49.99
         list-price: €59.99
         rating: 4.5 ★  the availability: In Stock
         delivery: Free next-day
-        ---
-        title: USB-C Hub (6-in-1)
-        price: €29.50
-        availability: Only 3 left!
-        rating: 4.1 ★
-        ---
-        title: Gaming Mouse XT-8 and list_price: $42.00
-        price: $35.00
-        availability: Out of Stock
-        warranty: 2-year limited
-        ---
-        title: Luggage Big 65 L
-        availability: Pre-order (ships in 3 weeks)
-        rating: 4.8 ★
+
+
+        title: Fridge New
+        
         """
+    
     
     p_op = hero.run(filtered_text, items, enforce_llm_based_parse=True)
     print("Success:", p_op.success)
 
+    #print(p_op.content)
+    print(" " )
     parsed_dict=p_op.content
     if isinstance(parsed_dict, list):
-        print("Parsed dict:" )
+        print("List elements:" )
         for e in parsed_dict:
             print(e)
     else:
         print("Parsed dict:", parsed_dict)
-
-    # print(" ")
-    # print("debug formatted_prompt=:",  p_op.generation_result.generation_request.formatted_prompt)
-    # print(" ")
-    # print("debug formatted_prompt=:",  p_op.generation_result.generation_request.unformatted_prompt)
+  
+    print(" ")
+    print(" ")
+    print("debug formatted_prompt=:",  p_op.generation_result.generation_request.formatted_prompt)
    
 
 

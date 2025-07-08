@@ -259,6 +259,110 @@ class FilterHero:
     @staticmethod
     def _stringify_json(data: Dict[str, Any]) -> str:
         return _json.dumps(data, ensure_ascii=False, indent=2)
+    
+
+
+    async def run_async(
+        self,
+        text: str | Dict[str, Any],
+        extraction_spec: WhatToRetain | List[WhatToRetain],
+        text_type: Optional[str] = None,
+        filter_separately: bool = False,
+        reduce_html: bool = True,
+        enforce_llm_based_filter: bool = False,
+    ) -> FilterOp:
+        """
+        Async version of run method. All parameters identical to sync version.
+        """
+        ts = time()
+
+        # 1) preprocess
+        payload = self._prepare_corpus(text, text_type, reduce_html)
+        if payload.error:
+            return FilterOp.from_result(
+                config=self.config,
+                content=None,
+                usage=None,
+                reduced_html=payload.reduced_html,
+                start_time=ts,
+                success=False,
+                error=payload.error,
+            )
+
+        # 2) dict fast-path unless forced
+        proc = self.process_corpus_payload(
+            payload, extraction_spec, enforce_llm_based_filter, ts
+        )
+        if proc.fast_op is not None:
+            return proc.fast_op
+
+        # 3) ensure string for LLM
+        corpus_for_llm: str = (
+            self._stringify_json(payload.corpus)
+            if payload.corpus_type == "json"
+            else str(payload.corpus)
+        )
+
+        # 4) dispatch async LLM calls
+        gen_results = await self._dispatch_async(
+            corpus_for_llm, extraction_spec, filter_separately
+        )
+
+        # 5) success flag
+        ok = (
+            gen_results[0].success
+            if isinstance(extraction_spec, WhatToRetain) or not filter_separately
+            else all(r.success for r in gen_results)
+        )
+
+        # 6) aggregate
+        content_final, usage_final = self._aggregate(
+            gen_results, extraction_spec, filter_separately
+        )
+
+        # 7) get primary generation result
+        primary_generation_result = gen_results[0] if gen_results else None
+
+        # 8) wrap
+        return FilterOp.from_result(
+            config=self.config,
+            content=content_final,
+            usage=usage_final,
+            reduced_html=proc.reduced,
+            html_reduce_op=self.html_reducer_op,
+            generation_result=primary_generation_result,
+            start_time=ts,
+            success=ok,
+            error=None if ok else "LLM filter failed",
+        )
+
+    # ───────────────────── helper (async dispatch) ─────────────────────
+    async def _dispatch_async(
+        self,
+        corpus_str: str,
+        items: WhatToRetain | List[WhatToRetain],
+        separate: bool,
+    ) -> List[GenerationResult]:
+        """
+        Async version of _dispatch. Returns list of GenerationResult objects.
+        """
+        item_list = [items] if isinstance(items, WhatToRetain) else items
+
+        # combined prompt (one call)
+        if len(item_list) == 1 or not separate:
+            prompt = "\n\n".join(it.compile() for it in item_list)
+            generation_result = await self.llm.filter_via_llm_async(corpus_str, prompt)
+            return [generation_result]
+
+        # separate=True & multiple items → gather concurrently
+        import asyncio
+
+        async def one(it: WhatToRetain):
+            return await self.llm.filter_via_llm_async(corpus_str, it.compile())
+
+        tasks = [asyncio.create_task(one(it)) for it in item_list]
+        generation_results = await asyncio.gather(*tasks)
+        return generation_results
 
 
 

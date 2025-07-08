@@ -310,7 +310,7 @@ def main() -> None:
     
     print(" ")
     print(" ")
-    print("pipeline_steps_results=",  p_op.generation_result.pipeline_steps_results)
+    # print("pipeline_steps_results=",  p_op.generation_result.pipeline_steps_results)
    
 
 

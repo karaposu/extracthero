@@ -3,7 +3,7 @@
 
 
 """
-ParseHero — the “parse” phase of ExtractHero.
+ParseHero — the "parse" phase of ExtractHero.
   • Converts a filtered corpus into structured data keyed by WhatToRetain specs.
   • Skips the LLM when the corpus is already a dict, unless you force it.
   • Performs per-field regex validation after parsing.
@@ -46,89 +46,75 @@ class ParseHero:
         enforce_llm_based_parse: bool = False,
     ) -> ParseOp:
         """
-        Same semantics as `run`, but non-blocking.
-        Requires your `MyLLMService` to expose `parse_via_llm_async`.
+        Parse the corpus into structured data using the WhatToRetain specifications.
         """
         start_ts = time()
 
-
+        # Fast-path for dict inputs (unless LLM is enforced)
         if isinstance(corpus, dict):
-
-            if enforce_llm_based_parse:
-
-                pass
-
-
-            else:
+            if not enforce_llm_based_parse:
                 parsed_values_dict = self.make_new_dict_by_parsing_keys_with_their_values(corpus, items)
                 return ParseOp.from_result(
-                                        config=self.config,
-                                        content=parsed_values_dict ,
-                                        usage=None,
-                                        start_time=start_ts,
-                                        success=True,    
-            )
+                    config=self.config,
+                    content=parsed_values_dict,
+                    usage=None,
+                    start_time=start_ts,
+                    success=True,
+                    generation_result=None  # No LLM was used
+                )
+            # If enforce_llm_based_parse=True, fall through to LLM processing
+
+        # Try to parse string as JSON first
         elif isinstance(corpus, str):
             try:
                 corpus_dict = _json.loads(corpus)
                 parsed_values_dict = self.make_new_dict_by_parsing_keys_with_their_values(corpus_dict, items)
                 return ParseOp.from_result(
-                                        config=self.config,
-                                        content=parsed_values_dict ,
-                                        usage=None,
-                                        start_time=start_ts,
-                                        success=True,    
-                 )
-                
+                    config=self.config,
+                    content=parsed_values_dict,
+                    usage=None,
+                    start_time=start_ts,
+                    success=True,
+                    generation_result=None  # No LLM was used
+                )
             except Exception:
-               
-                pass # dont do anything, bc it is true string and we will use LLM to parse
+                # Not valid JSON, continue to LLM processing
+                pass
 
+        # If we reach here, we need to use LLM to parse the corpus
         
-
-        # if code reaches here it means corpus is string and not json or dict
-   
-        # creating prompt
-
+        # Build prompt from WhatToRetain specifications
         if isinstance(items, WhatToRetain):
-            prompt = (items.compile_parser())
+            prompt = items.compile_parser()
         else:
-            prompt="\n\n".join(it.compile_parser() for it in items)
+            prompt = "\n\n".join(it.compile_parser() for it in items)
 
-        
+        # Call LLM for parsing
+        model = "gpt-4o"
+        # model = "gpt-4o-mini"
+        generation_result = self.llm.parse_via_llm(corpus, prompt, model=model)
 
-        # 4. call async LLM
-        model= "gpt-4o"
-        # model= "gpt-4o-mini"
-        gen = self.llm.parse_via_llm(corpus, prompt, model=model)
-
-
-        
-        if not gen.success:
+        if not generation_result.success:
             return ParseOp.from_result(
                 config=self.config,
                 content=None,
-                usage=gen.usage,
+                usage=generation_result.usage,
                 start_time=start_ts,
                 success=False,
                 error="LLM parse failed",
-              
+                generation_result=generation_result
             )
 
-        # 5. decode JSON
-        parsed_dict=gen.content
-        
-
+        # Return successful parse result
         return ParseOp.from_result(
             config=self.config,
-            content=parsed_dict,
-            usage=gen.usage,
+            content=generation_result.content,
+            usage=generation_result.usage,
             start_time=start_ts,
             success=True,
             error=None,
-            generation_result=gen
+            generation_result=generation_result
         )
-
 
     # ───────────────────── helper utilities ─────────────────────
     @staticmethod
@@ -136,26 +122,11 @@ class ParseHero:
         data: Dict[str, Any],
         items: WhatToRetain | List[WhatToRetain],
     ) -> Dict[str, Any]:
+        """Extract only the specified keys from the data dictionary."""
         keys = [items.name] if isinstance(items, WhatToRetain) else [it.name for it in items]
         return {k: data.get(k) for k in keys}
 
-    # @staticmethod
-    # def _regex_validate(
-    #     data: Dict[str, Any],
-    #     items: WhatToRetain | List[WhatToRetain],
-    # ) -> Tuple[bool, Optional[str]]:
-    #     item_list = [items] if isinstance(items, WhatToRetain) else items
-    #     import re
-
-    #     for it in item_list:
-    #         if it.regex_validator and it.name in data:
-    #             if data[it.name] is None or not re.fullmatch(it.regex_validator, str(data[it.name])):
-    #                 return False, f"Field '{it.name}' failed regex validation"
-    #     return True, None
-    
-
-        # ───────────────────────── public (async) ───────────────────────
-    
+    # ───────────────────────── public (async) ───────────────────────
     async def run_async(
         self,
         corpus: str | Dict[str, Any],
@@ -163,83 +134,71 @@ class ParseHero:
         enforce_llm_based_parse: bool = False,
     ) -> ParseOp:
         """
-        Same semantics as `run`, but non-blocking.
-        Requires your `MyLLMService` to expose `parse_via_llm_async`.
+        Async version of run method.
         """
         start_ts = time()
 
-
+        # Fast-path for dict inputs (unless LLM is enforced)
         if isinstance(corpus, dict):
-
-            if enforce_llm_based_parse:
-
-                pass
-
-
-            else:
+            if not enforce_llm_based_parse:
                 parsed_values_dict = self.make_new_dict_by_parsing_keys_with_their_values(corpus, items)
                 return ParseOp.from_result(
-                                        config=self.config,
-                                        content=parsed_values_dict ,
-                                        usage=None,
-                                        start_time=start_ts,
-                                        success=True,    
-            )
+                    config=self.config,
+                    content=parsed_values_dict,
+                    usage=None,
+                    start_time=start_ts,
+                    success=True,
+                    generation_result=None  # No LLM was used
+                )
+
+        # Try to parse string as JSON first
         elif isinstance(corpus, str):
             try:
                 corpus_dict = _json.loads(corpus)
                 parsed_values_dict = self.make_new_dict_by_parsing_keys_with_their_values(corpus_dict, items)
                 return ParseOp.from_result(
-                                        config=self.config,
-                                        content=parsed_values_dict ,
-                                        usage=None,
-                                        start_time=start_ts,
-                                        success=True,    
-                 )
-                
+                    config=self.config,
+                    content=parsed_values_dict,
+                    usage=None,
+                    start_time=start_ts,
+                    success=True,
+                    generation_result=None  # No LLM was used
+                )
             except Exception:
-               
-                pass # dont do anything, bc it is true string and we will use LLM to parse
+                # Not valid JSON, continue to LLM processing
+                pass
 
-        
-
-        # if code reaches here it means corpus is string and not json or dict
-   
-        # creating prompt
-
+        # Build prompt from WhatToRetain specifications
         if isinstance(items, WhatToRetain):
-            prompt = (items.compile())
+            prompt = items.compile()
         else:
-            "\n\n".join(it.compile() for it in items)
+            prompt = "\n\n".join(it.compile() for it in items)
 
-      
+        # Call async LLM for parsing
+        generation_result: GenerationResult = await self.llm.parse_via_llm_async(corpus, prompt)
         
-        # 4. call async LLM
-        gen: GenerationResult = await self.llm.parse_via_llm_async(corpus, prompt)
-        
-        if not gen.success:
+        if not generation_result.success:
             return ParseOp.from_result(
                 config=self.config,
                 content=None,
-                usage=gen.usage,
+                usage=generation_result.usage,
                 start_time=start_ts,
                 success=False,
                 error="LLM parse failed",
+                generation_result=generation_result
             )
 
-        # 5. decode JSON
-        parsed_dict=gen.content
-        
-
+        # Return successful parse result
         return ParseOp.from_result(
             config=self.config,
-            content=parsed_dict,
-            usage=gen.usage,
+            content=generation_result.content,
+            usage=generation_result.usage,
             start_time=start_ts,
             success=True,
             error=None,
-            generation_result=gen
+            generation_result=generation_result
         )
+
 
 
 # ────────────────────────── demo ───────────────────────────
@@ -272,7 +231,7 @@ def main() -> None:
 
     
 
-
+    
     # filtered_text = """
     #     title: Wireless Keyboard Pro and  price: €49.99
     #     list-price: €59.99
@@ -305,10 +264,40 @@ def main() -> None:
         
         """
     
-    
-    p_op = hero.run(filtered_text, items, enforce_llm_based_parse=True)
-    print("Success:", p_op.success)
 
+
+    extraction_spec = [
+            WhatToRetain(
+                name="title",
+                desc="Product title",
+                example="Wireless Keyboard"
+            ),
+            WhatToRetain(
+                name="price",
+                desc="Product price with currency symbol",
+                example="€49.99"
+            )
+        ]
+    
+    filtered_text2  ="""
+            ```html
+        <div class="product">
+        <h2 class="title">Wireless Keyboard</h2>
+        <span class="price">&euro;49.99</span>
+        <p class="description">Compact wireless keyboard with RGB lighting</p>
+        </div>
+        <div class="product">
+        <h2 class="title">USB-C Hub</h2>
+        <span class="price">&euro;29.50</span>
+        <p class="description">7-in-1 USB-C hub with HDMI output</p>
+        </div>
+        ```
+        """
+    
+    
+    p_op = hero.run(filtered_text2, extraction_spec, enforce_llm_based_parse=True)
+    print("Success:", p_op.success)
+    
     #print(p_op.content)
     print(" " )
     parsed_dict=p_op.content
@@ -318,10 +307,10 @@ def main() -> None:
             print(e)
     else:
         print("Parsed dict:", parsed_dict)
-  
+    
     print(" ")
     print(" ")
-    print("debug formatted_prompt=:",  p_op.generation_result.generation_request.formatted_prompt)
+    print("pipeline_steps_results=",  p_op.generation_result.pipeline_steps_results)
    
 
 

@@ -36,7 +36,7 @@ from typing import List, Optional
 @dataclass
 class WhatToRetain:
     """
-    Specification for FilterHero’s “guidable selective semantic context chunking”.
+    Specification for FilterHero's "guidable selective semantic context chunking".
 
     Parameters
     ----------
@@ -45,19 +45,19 @@ class WhatToRetain:
     desc : Optional[str]
        An LLM-readable, definitive description of the item to filter.  
         For example, for a product name you might write:  
-        “Title of the product as it is listed.”
+        "Title of the product as it is listed."
     include_context_chunk : bool
         If True (default), instructs the LLM to retain the entire semantic
         content relevant to this item.
     custom_context_chunk_desc : Optional[str]
-        Extra guidance that refines what “context chunk” means.  
-        Example: “Only non-technical sales information—exclude technical
-        attributes.”
+        Extra guidance that refines what "context chunk" means.  
+        Example: "Only non-technical sales information—exclude technical
+        attributes."
     wrt_to_source_filter_desc : Optional[str]
         Free-text relevance hint that narrows the selection with respect to the
-        page’s main subject.  
-        Examples: “Primary product only”;  
-        “Should not include side products like recommendations.”
+        page's main subject.  
+        Examples: "Primary product only";  
+        "Should not include side products like recommendations."
     
     context_contradiction_check : bool
         If True, instructs the LLM to discard chunks that clearly contradict
@@ -148,55 +148,6 @@ class WhatToRetain:
 
 
 
-
-@dataclass
-class ItemToExtract:
-    name: str                                  # e.g. "price"
-    desc: Optional[str] = None                 # human-readable description
-    regex_validator: Optional[str] = None      # format guard
-    text_rules: List[str] = field(default_factory=list)
-    example: Optional[str] = None
-
-    # ───────────── context options ─────────
-    include_context_chunk: bool = False        # keep the entire semantic chunk?
-    custom_context_chunk_desc: Optional[str] = None
-    # if set, guides the LLM on how to pick the surrounding context chunk;
-    # if None, the LLM decides boundaries automatically
-
-    def compile(self) -> str:
-        sections: List[str] = [f"Field name: {self.name}"]
-
-        if self.desc:
-            sections.append(f"Field description: {self.desc}")
-
-        if self.text_rules:
-            sections.append("Text rules: " + "; ".join(self.text_rules))
-
-        if self.example:
-            sections.append(f"Example: {self.example}")
-
-        if self.include_context_chunk:
-            guidance = (
-                self.custom_context_chunk_desc
-                or "Include the full semantic context block that belongs "
-                   "to this field (e.g., the <div class='product'> element)."
-            )
-            sections.append(f"Context guidance: {guidance}")
-
-        return "\n".join(sections)
-    
-
-
-
-
-    
-
-
-
-
-
-
-
 class ExtractConfig:
     def __init__(
         self,
@@ -238,8 +189,8 @@ class FilterOp:
     elapsed_time: float             # Time in seconds that the filter step took
     config: ExtractConfig           # The ExtractConfig used for this filter run
     reduced_html: Optional[str]     # Reduced HTML (if HTMLReducer was applied)
-    html_reduce_op:     Optional[Any] = None   # holds the full Domreducer ReduceOperation object
-    generation_result: Any =None
+    html_reduce_op: Optional[Any] = None   # holds the full Domreducer ReduceOperation object
+    generation_result: Optional[Any] = None  # holds the GenerationResult from LLM call
     error: Optional[str] = None   
 
     @classmethod
@@ -250,7 +201,8 @@ class FilterOp:
         usage: Optional[Dict[str, Any]],
         reduced_html: Optional[str],
         start_time: float,
-        html_reduce_op: Optional[Any] = None ,
+        html_reduce_op: Optional[Any] = None,
+        generation_result: Optional[Any] = None,  # ← Add this parameter
         success: bool = True,
         error: Optional[str] = None
     ) -> "FilterOp":
@@ -262,7 +214,8 @@ class FilterOp:
             elapsed_time=elapsed,
             config=config,
             reduced_html=reduced_html,
-            html_reduce_op=html_reduce_op,         # ← pass it here
+            html_reduce_op=html_reduce_op,
+            generation_result=generation_result,  # ← Set it here
             error=error
         )
     
@@ -284,7 +237,7 @@ class ParseOp:
     elapsed_time: float                            # Time in seconds that the parse step took
     config: ExtractConfig                          # The ExtractConfig used for this parse run
     error: Optional[str] = None                    # Optional error message if success=False
-    generation_result: Optional[Any] =None
+    generation_result: Optional[Any] = None
     
     @classmethod
     def from_result(
@@ -295,7 +248,7 @@ class ParseOp:
         start_time: float,
         success: bool = True,
         error: Optional[str] = None,
-        generation_result=generation_result
+        generation_result: Optional[Any] = None
     ) -> "ParseOp":
         elapsed = time.time() - start_time
         return cls(
@@ -321,4 +274,3 @@ class ExtractOp:
     @property
     def success(self) -> bool:
         return self.filter_op.success and self.parse_op.success
-

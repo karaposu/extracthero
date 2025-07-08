@@ -16,54 +16,18 @@ from extracthero.schemes import (
     WhatToRetain,
 )
 from extracthero.filterhero import FilterHero
+from extracthero.parsehero import ParseHero
 from extracthero.utils import load_html
 
 
 class ExtractHero:
-    """High-level orchestrator that chains FilterHero → LLM parse phase."""
+    """High-level orchestrator that chains FilterHero → ParseHero."""
 
     def __init__(self, config: ExtractConfig | None = None, llm: MyLLMService | None = None):
         self.config = config or ExtractConfig()
         self.llm = llm or MyLLMService()
         self.filter_hero = FilterHero(self.config, self.llm)
-
-    # ────────────────────────── parse phase ──────────────────────────
-    def _parser(
-        self,
-        corpus: str,
-        items: WhatToRetain | List[WhatToRetain],
-    ) -> ParseOp:
-        start_ts = time()
-        prompt = (
-            items.compile()
-            if isinstance(items, WhatToRetain)
-            else "\n\n".join(it.compile() for it in items)
-        )
-        gen = self.llm.parse_via_llm(corpus, prompt)
-
-        actual_success = gen.success and isinstance(gen.content, dict) and gen.content is not None
-        
-        return ParseOp.from_result(
-            config=self.config,
-            content=gen.content if actual_success else None,
-            usage=gen.usage,
-            start_time=start_ts,
-            success=actual_success,  # 🎯 Only True if LLM succeeded AND returned a dict
-            error=None if actual_success else "LLM did not return valid structured data",
-        )
-
-       
-        
-        
-        # return ParseOp.from_result(
-        #     config=self.config,
-        #     content=gen.content if gen.success else None,
-        #     usage=gen.usage,
-        #     start_time=start_ts,
-        #     success=gen.success,
-        #     error=None if gen.success else "LLM parse failed",
-        # )
-
+        self.parse_hero = ParseHero(self.config, self.llm)
     
     def extract(
         self,
@@ -72,6 +36,7 @@ class ExtractHero:
         text_type: Optional[str] = None,
         reduce_html: bool = True,
         enforce_llm_based_filter: bool = False,
+        enforce_llm_based_parse: bool = False,
         filter_separately: bool = False,
     ) -> ExtractOp:
         """
@@ -80,10 +45,11 @@ class ExtractHero:
         Parameters
         ----------
         text : raw HTML / JSON string / dict / plain text
-        items: one or many ItemToExtract
+        extraction_spec: one or many WhatToRetain specifications
         text_type : "html" | "json" | "dict" | None
         reduce_html : strip HTML to visible text (default True)
-        enforce_llm_based_filter : force JSON/dict inputs through LLM
+        enforce_llm_based_filter : force JSON/dict inputs through LLM filter
+        enforce_llm_based_parse : force parsed content through LLM parse
         filter_separately : one LLM call per item (default False)
         """
         # Phase-1: filtering
@@ -105,32 +71,38 @@ class ExtractHero:
                 start_time=time(),
                 success=False,
                 error="Filter phase failed",
+                generation_result=None
             )
             return ExtractOp(filter_op=filter_op, parse_op=parse_op, content=None)
 
         # Phase-2: parsing
-        parse_op = self._parser(filter_op.content, extraction_spec)
+        parse_op = self.parse_hero.run(
+            filter_op.content, 
+            extraction_spec,
+            enforce_llm_based_parse=enforce_llm_based_parse
+        )
+        
         return ExtractOp(
             filter_op=filter_op,
             parse_op=parse_op,
             content=parse_op.content,
         )
     
-    
     # ─────────────────── extraction (async) ──────────────────
     async def extract_async(
         self,
         text: str | dict,
-        items: WhatToRetain | List[WhatToRetain],
+        extraction_spec: WhatToRetain | List[WhatToRetain],
         text_type: Optional[str] = None,
         reduce_html: bool = True,
         enforce_llm_based_filter: bool = False,
+        enforce_llm_based_parse: bool = False,
         filter_separately: bool = False,
     ) -> ExtractOp:
         """Async end-to-end pipeline."""
         filter_op: FilterOp = await self.filter_hero.run_async(
             text,
-            items,
+            extraction_spec,
             text_type=text_type,
             filter_separately=filter_separately,
             reduce_html=reduce_html,
@@ -145,36 +117,20 @@ class ExtractHero:
                 start_time=time(),
                 success=False,
                 error="Filter phase failed",
+                generation_result=None
             )
             return ExtractOp(filter_op=filter_op, parse_op=parse_op, content=None)
 
-        parse_op = await self._parser_async(filter_op.content, items)
-        return ExtractOp(filter_op=filter_op, parse_op=parse_op, content=parse_op.content)
-
-
-    
-
-
-    # ───────────────────── parse (async) ────────────────────
-    async def _parser_async(
-        self,
-        corpus: str,
-        items: WhatToRetain | List[WhatToRetain],
-    ) -> ParseOp:
-        start_ts = time()
-        prompt = (
-            items.compile()
-            if isinstance(items, WhatToRetain)
-            else "\n\n".join(it.compile() for it in items)
+        parse_op = await self.parse_hero.run_async(
+            filter_op.content, 
+            extraction_spec,
+            enforce_llm_based_parse=enforce_llm_based_parse
         )
-        gen = await self.llm.parse_via_llm_async(corpus, prompt)
-        return ParseOp.from_result(
-            config=self.config,
-            content=gen.content if gen.success else None,
-            usage=gen.usage,
-            start_time=start_ts,
-            success=gen.success,
-            error=None if gen.success else "LLM parse failed",
+        
+        return ExtractOp(
+            filter_op=filter_op, 
+            parse_op=parse_op, 
+            content=parse_op.content
         )
 
 

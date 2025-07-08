@@ -1,7 +1,7 @@
 # extracthero/filterhero.py
 # run with:  python -m extracthero.filterhero
 """
-FilterHero — the “filter” phase of ExtractHero.
+FilterHero — the "filter" phase of ExtractHero.
 • Normalises raw input (HTML / JSON / dict / plain-text).
 • Optionally reduces HTML to visible text.
 • Uses a JSON fast-path when possible; otherwise builds LLM prompts.
@@ -68,8 +68,6 @@ class FilterHero:
         # 1) Pre-process (HTML reduction / JSON parsing / pass-through)
         payload = self._prepare_corpus(text, text_type, reduce_html)
 
-
-
         if payload.error:
             return FilterOp.from_result(
                 config=self.config,
@@ -78,7 +76,6 @@ class FilterHero:
                 reduced_html=payload.reduced_html,
                 start_time=ts,
                 success=False,
-             
                 error=payload.error,
             )
 
@@ -102,16 +99,21 @@ class FilterHero:
         # 5) Aggregate content + usage
         content, usage = self._aggregate(gen_results, extraction_spec, filter_separately)
 
-        # 6) Wrap & return
+        # 6) Determine which generation_result to store
+        # For single result or combined prompt, use first result
+        # For multiple separate results, store the first one (could be modified to store all)
+        primary_generation_result = gen_results[0] if gen_results else None
+
+        # 7) Wrap & return
         return FilterOp.from_result(
             config=self.config,
             content=content,
             usage=usage,
             reduced_html=proc.reduced,
             html_reduce_op=self.html_reducer_op,
+            generation_result=primary_generation_result,  # ← Pass the generation result here
             start_time=ts,
             success=ok,
-
             error=None if ok else "LLM filter failed",
         )
 
@@ -195,7 +197,6 @@ class FilterHero:
                     reduced_html=None,
                     start_time=ts,
                     success=True,
-                  
                     error=None,
                 )
                 return ProcessResult(fast, None, None)
@@ -213,14 +214,24 @@ class FilterHero:
         items: WhatToRetain | List[WhatToRetain],
         separate: bool,
     ) -> List[GenerationResult]:
+        """
+        Dispatch LLM calls and return list of GenerationResult objects.
+        """
         it_list = [items] if isinstance(items, WhatToRetain) else items
+        
         if len(it_list) == 1 or not separate:
+            # Combined prompt approach
             prompt = "\n\n".join(it.compile() for it in it_list)
-            return [self.llm.filter_via_llm(corpus_str, prompt)]
+            generation_result = self.llm.filter_via_llm(corpus_str, prompt)
+            return [generation_result]
 
-        return [
-            self.llm.filter_via_llm(corpus_str, it.compile()) for it in it_list
-        ]
+        # Separate calls approach
+        generation_results = []
+        for it in it_list:
+            generation_result = self.llm.filter_via_llm(corpus_str, it.compile())
+            generation_results.append(generation_result)
+        
+        return generation_results
 
     # ───────────── helper: aggregate results ─────────────
     def _aggregate(
@@ -248,7 +259,6 @@ class FilterHero:
     @staticmethod
     def _stringify_json(data: Dict[str, Any]) -> str:
         return _json.dumps(data, ensure_ascii=False, indent=2)
-    
 
 
 
@@ -272,54 +282,10 @@ Return the retained chunks exactly as HTML snippets.
 
 
 
-
-
-
-sample_page_dict = {
-    "store_name": "Example Store",
-    "promo_banner": "🔥 Flash Sale: Up to 50% off! 🔥",
-    "products": [
-        {
-            "title": "Wireless Keyboard Pro",
-            "description": (
-                "Ergonomic backlit keyboard with rechargeable battery "
-                "and adjustable tilt."
-            ),
-            "list_price": "€59.99",
-            "current_price": "€49.99",
-            "rating": 4.5,                       # pulled from data-rating="4.5"
-            "availability": "In Stock",
-            "features": [
-                "Bluetooth 5.0",
-                "USB-C charging",
-                "Full-size layout",
-            ],
-            "primary": True                      # hero product flag (optional)
-        },
-        {
-            "title": "USB-C Hub",
-            "description": (
-                "6-in-1 hub with HDMI, Ethernet, SD-card reader and two USB-A ports."
-            ),
-            "current_price": "€29.50",
-            "availability": "Only 3 left!",
-            "primary": False
-        },
-        {
-            "title": "Gaming Mouse",
-            "description": "High-precision mouse with RGB lighting.",
-            "current_price": "$35.00",
-            "availability": "Out of Stock",
-            "primary": False
-        }
-    ],
-    "newsletter_signup": True,
-    "copyright": "© 2025 Example Store"
-}
-
-
 # ─────────────────────────────── demo ───────────────────────────────
 if __name__ == "__main__":
+
+    from extracthero.sample_dicts import sample_page_dict
     cfg = ExtractConfig()
     filter_hero = FilterHero(cfg)
     
@@ -360,7 +326,7 @@ if __name__ == "__main__":
     #   <div class="product"><h2 class="title">USB-C Hub</h2><span class="price">€29.50</span></div>
     # </body></html>
     # """
-
+    
    
     html_doc = load_html("extracthero/simple_html_sample_2.html")
     

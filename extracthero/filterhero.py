@@ -67,6 +67,9 @@ class FilterHero:
        
         # 1) Pre-process (HTML reduction / JSON parsing / pass-through)
         payload = self._prepare_corpus(text, text_type, reduce_html)
+
+
+
         if payload.error:
             return FilterOp.from_result(
                 config=self.config,
@@ -268,24 +271,88 @@ Return the retained chunks exactly as HTML snippets.
 """.strip()
 
 
+
+
+
+
+sample_page_dict = {
+    "store_name": "Example Store",
+    "promo_banner": "🔥 Flash Sale: Up to 50% off! 🔥",
+    "products": [
+        {
+            "title": "Wireless Keyboard Pro",
+            "description": (
+                "Ergonomic backlit keyboard with rechargeable battery "
+                "and adjustable tilt."
+            ),
+            "list_price": "€59.99",
+            "current_price": "€49.99",
+            "rating": 4.5,                       # pulled from data-rating="4.5"
+            "availability": "In Stock",
+            "features": [
+                "Bluetooth 5.0",
+                "USB-C charging",
+                "Full-size layout",
+            ],
+            "primary": True                      # hero product flag (optional)
+        },
+        {
+            "title": "USB-C Hub",
+            "description": (
+                "6-in-1 hub with HDMI, Ethernet, SD-card reader and two USB-A ports."
+            ),
+            "current_price": "€29.50",
+            "availability": "Only 3 left!",
+            "primary": False
+        },
+        {
+            "title": "Gaming Mouse",
+            "description": "High-precision mouse with RGB lighting.",
+            "current_price": "$35.00",
+            "availability": "Out of Stock",
+            "primary": False
+        }
+    ],
+    "newsletter_signup": True,
+    "copyright": "© 2025 Example Store"
+}
+
+
 # ─────────────────────────────── demo ───────────────────────────────
 if __name__ == "__main__":
     cfg = ExtractConfig()
     filter_hero = FilterHero(cfg)
     
+    # specs = [
+    #     WhatToRetain(
+    #         name="products",
+    #         desc="  just title and price",
+    #         # wrt_to_source_filter_desc=wrt_to_source_filter_desc,
+    #         include_context_chunk=False,
+    #         # text_rules=[
+    #         #     "productlar cok buyuk olmasin "
+    #         # ]
+    #     )
+       
+    # ]
+
+
     specs = [
         WhatToRetain(
             name="products",
-            # desc="product  including title and price",
-            wrt_to_source_filter_desc=wrt_to_source_filter_desc,
+            desc="  just title and price",
+            # wrt_to_source_filter_desc=wrt_to_source_filter_desc,
             include_context_chunk=False,
             # text_rules=[
             #     "productlar cok buyuk olmasin "
             # ]
         )
+       
     ]
 
-    # HowToParse
+
+
+
 
     # html_doc = """
     # <html><body>
@@ -296,12 +363,14 @@ if __name__ == "__main__":
 
    
     html_doc = load_html("extracthero/simple_html_sample_2.html")
-
-  
-    filter_op = filter_hero.run(html_doc, specs, text_type="html")
+    
+    
+    filter_op = filter_hero.run(sample_page_dict, specs, text_type="dict")
+    # filter_op = filter_hero.run(html_doc, specs, text_type="html")
     # filter_op = filter_hero.run(html_doc, specs, text_type="html", reduce_html=False)
 
- 
+    
+
     
     print("Reduced_html")
     print(" ")
@@ -309,14 +378,15 @@ if __name__ == "__main__":
 
     print(" ")
     print("reducement_details: ")
-    print(filter_op.html_reduce_op.reducement_details)
+   
+    if filter_op.html_reduce_op is not None:
+        print("reducement_details:", filter_op.html_reduce_op.reducement_details)
+        print("token_reducement_percentage:", filter_op.html_reduce_op.token_reducement_percentage)
+    else:
+        print("No HTML reduction applied (input was dict/JSON fast-path).")
     print(" ")
     
-    print(" ")
-    print("token_reducement_percentage: ")
-    print(filter_op.html_reduce_op.token_reducement_percentage)
-    print(" ")
-    
+ 
     
     
 
@@ -325,10 +395,3 @@ if __name__ == "__main__":
     print(filter_op.content)
 
     
-
-    # print(" ")
-    # print("Success:", filter_op.success)
-
-
-
-# Entity

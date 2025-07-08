@@ -33,6 +33,53 @@ class MyLLMService(BaseLLMService):
     ) -> GenerationResult:
         
 
+        # formatted_prompt=f"""
+
+        #         Parse the given text corpus into strict JSON using only the strings provided in `explicit_dict_keywords`. Follow these rules exactly:
+
+        #         1. **Use Only `explicit_dict_keywords`**: Use exactly the strings in `explicit_dict_keywords` as the JSON property names — no synonyms or variants.  
+        #         2. **No Extra Properties**: Do not add, remove, rename, or normalize any properties beyond those in `explicit_dict_keywords`.  
+        #         3. **Flat Structure**: Never create nested objects or sub-dictionaries. All properties must live at the top level of each record.  
+        #         4. **Missing Values**: If a property from `explicit_dict_keywords` does not appear in the corpus, include it with the value `null`.  
+        #         5. **Multiple Records**: If the corpus contains multiple independent sets of data for these properties, output a JSON array of objects—one object per set.  
+        #         6. **No Inference**: Do not infer, invent, or normalize any new information.  
+        #         7. **Strict JSON**: Output must be valid JSON (no comments, no trailing commas).
+
+        #         **Input Variables**  
+        #         -  Here is the text corpus {corpus}  
+        #         - Here is explicit_dict_keywords   {parse_keywords}
+
+        #         Give the output in JSON format , explicit_dict_keywords as key and then result 'result_here' 
+
+
+        # """
+        
+        # formatted_prompt=f"""
+
+        #         Parse the given text corpus into strict JSON using only the strings provided in `explicit_dict_keywords`. Follow these rules exactly:
+
+        #         1. **Use Only `explicit_dict_keywords`**: Use exactly the strings in `explicit_dict_keywords` as the JSON property names — no synonyms or variants.  
+        #         2. **No Extra Properties**: Do not add, remove, rename, or normalize any properties beyond those in `explicit_dict_keywords`.  
+        #         3. **Flat Structure**: Never create nested objects or sub-dictionaries. All properties must live at the top level of each record.  
+        #         4. **Missing Values**: If a property from `explicit_dict_keywords` does not appear in the corpus, include it with the value `null`.  
+        #         5. **Multiple Records**: If the corpus contains multiple independent sets of data for these properties, output a JSON array of objects—one object per set.  
+        #         6. **No Inference**: Do not infer, invent, or normalize any new information.  
+        #         7. **Strict JSON**: Output must be valid JSON (no comments, no trailing commas).
+
+        #         **Input Variables**  
+        #         -  Here is the text corpus {corpus}  
+        #         - Here is explicit_dict_keywords   {parse_keywords}
+
+        #         Give the output in JSON format , explicit_dict_keywords as key and then result 'result_here' 
+
+
+        # """
+
+
+
+
+
+        
         formatted_prompt = f"""
 Here is the text corpus relevant to our task:
 {corpus}

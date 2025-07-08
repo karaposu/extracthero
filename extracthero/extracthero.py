@@ -5,6 +5,7 @@ from __future__ import annotations
 
 from time import time
 from typing import List, Union, Optional
+import json
 
 from extracthero.myllmservice import MyLLMService
 from extracthero.schemes import (
@@ -39,14 +40,29 @@ class ExtractHero:
             else "\n\n".join(it.compile() for it in items)
         )
         gen = self.llm.parse_via_llm(corpus, prompt)
+
+        actual_success = gen.success and isinstance(gen.content, dict) and gen.content is not None
+        
         return ParseOp.from_result(
             config=self.config,
-            content=gen.content if gen.success else None,
+            content=gen.content if actual_success else None,
             usage=gen.usage,
             start_time=start_ts,
-            success=gen.success,
-            error=None if gen.success else "LLM parse failed",
+            success=actual_success,  # 🎯 Only True if LLM succeeded AND returned a dict
+            error=None if actual_success else "LLM did not return valid structured data",
         )
+
+       
+        
+        
+        # return ParseOp.from_result(
+        #     config=self.config,
+        #     content=gen.content if gen.success else None,
+        #     usage=gen.usage,
+        #     start_time=start_ts,
+        #     success=gen.success,
+        #     error=None if gen.success else "LLM parse failed",
+        # )
 
     
     def extract(

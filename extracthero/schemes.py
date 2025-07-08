@@ -264,13 +264,100 @@ class ParseOp:
     
 
 
+
 @dataclass
 class ExtractOp:
     filter_op: FilterOp
     parse_op: ParseOp
-    content: Optional[Any] = None       
-
+    content: Optional[Any] = None
+    elapsed_time: float = 0.0                    # Total time for entire extraction
+    usage: Optional[Dict[str, Any]] = None       # Combined usage from both phases
+    error: Optional[str] = None                  # First error encountered
 
     @property
     def success(self) -> bool:
         return self.filter_op.success and self.parse_op.success
+    
+    @classmethod
+    def from_operations(
+        cls,
+        filter_op: FilterOp,
+        parse_op: ParseOp,
+        start_time: float,
+        content: Optional[Any] = None
+    ) -> "ExtractOp":
+        """
+        Create ExtractOp with calculated metrics from filter and parse operations.
+        
+        Parameters
+        ----------
+        filter_op : FilterOp
+            The completed filter operation
+        parse_op : ParseOp  
+            The completed parse operation
+        start_time : float
+            When the entire extraction started (from time.time())
+        content : Optional[Any]
+            The final extracted content (usually parse_op.content)
+        """
+        import time
+        
+        # Calculate total elapsed time
+        total_elapsed = time.time() - start_time
+        
+        # Create instance
+        instance = cls(
+            filter_op=filter_op,
+            parse_op=parse_op,
+            content=content,
+            elapsed_time=total_elapsed,
+            usage=None,  # Will be set by _combine_usage()
+            error=None   # Will be set by _get_first_error()
+        )
+        
+        # Calculate and set combined usage
+        instance._combine_usage()
+        
+        # Determine and set first error
+        instance._get_first_error()
+        
+        return instance
+    
+    
+    def _get_first_error(self) -> None:
+        """Get the first error encountered in the extraction pipeline and set self.error."""
+        if not self.filter_op.success and self.filter_op.error:
+            self.error = f"Filter phase: {self.filter_op.error}"
+        elif not self.parse_op.success and self.parse_op.error:
+            self.error = f"Parse phase: {self.parse_op.error}"
+        else:
+            self.error = None
+    
+    
+
+    def _combine_usage(self) -> None:
+        """Combine usage statistics by merging dicts and summing same keys."""
+        filter_usage = self.filter_op.generation_result.usage if self.filter_op.generation_result else None
+        parse_usage = self.parse_op.generation_result.usage if self.parse_op.generation_result else None
+        
+        if not filter_usage and not parse_usage:
+            self.usage = None
+            return
+            
+        combined = {}
+        
+        # Add all keys from filter usage
+        if filter_usage:
+            combined.update(filter_usage)
+        
+        # Add parse usage, summing if key already exists
+        if parse_usage:
+            for key, value in parse_usage.items():
+                if key in combined and isinstance(value, (int, float)) and isinstance(combined[key], (int, float)):
+                    combined[key] += value  # Sum same keys
+                else:
+                    combined[key] = value   # New key or non-numeric
+        
+        self.usage = combined if combined else None
+    
+

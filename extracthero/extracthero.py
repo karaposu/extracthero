@@ -21,14 +21,14 @@ from extracthero.utils import load_html
 
 
 class ExtractHero:
-    """High-level orchestrator that chains FilterHero → ParseHero."""
+    """High-level orchestrator that chains FilterHero → ParseHero with rich metrics."""
 
     def __init__(self, config: ExtractConfig | None = None, llm: MyLLMService | None = None):
         self.config = config or ExtractConfig()
         self.llm = llm or MyLLMService()
         self.filter_hero = FilterHero(self.config, self.llm)
         self.parse_hero = ParseHero(self.config, self.llm)
-    
+
     def extract(
         self,
         text: str | dict,
@@ -40,19 +40,35 @@ class ExtractHero:
         filter_separately: bool = False,
     ) -> ExtractOp:
         """
-        End-to-end extraction pipeline.
+        End-to-end extraction pipeline with rich metrics and error tracking.
 
         Parameters
         ----------
         text : raw HTML / JSON string / dict / plain text
-        extraction_spec: one or many WhatToRetain specifications
+            The source content to extract data from
+        extraction_spec: one or many WhatToRetain specifications  
+            Defines what data to extract and how
         text_type : "html" | "json" | "dict" | None
-        reduce_html : strip HTML to visible text (default True)
-        enforce_llm_based_filter : force JSON/dict inputs through LLM filter
-        enforce_llm_based_parse : force parsed content through LLM parse
-        filter_separately : one LLM call per item (default False)
+            Type hint for input processing optimization
+        reduce_html : bool, default True
+            Apply DomReducer to strip HTML down to essential content
+        enforce_llm_based_filter : bool, default False
+            Force JSON/dict inputs through LLM filter instead of fast-path
+        enforce_llm_based_parse : bool, default False  
+            Force structured data through LLM parse instead of fast-path
+        filter_separately : bool, default False
+            Run separate LLM calls per extraction spec (enables concurrency)
+            
+        Returns
+        -------
+        ExtractOp
+            Rich result object with content, timing, usage, and error details
         """
-        # Phase-1: filtering
+        # ⏱️ Start timing the entire extraction operation
+        extraction_start_time = time()
+        
+        # Phase-1: Filtering
+        print("🔍 Starting filter phase...")
         filter_op: FilterOp = self.filter_hero.run(
             text,
             extraction_spec,
@@ -61,32 +77,53 @@ class ExtractHero:
             reduce_html=reduce_html,
             enforce_llm_based_filter=enforce_llm_based_filter,
         )
+        
+        print(f"✅ Filter phase completed - Success: {filter_op.success}")
 
+        # Check if filter phase failed
         if not filter_op.success:
-            # short-circuit parse phase
+            print("❌ Filter phase failed, short-circuiting parse phase")
+            
+            # Create failed parse operation
             parse_op = ParseOp.from_result(
                 config=self.config,
                 content=None,
                 usage=None,
                 start_time=time(),
                 success=False,
-                error="Filter phase failed",
+                error="Filter phase failed - parse not attempted",
                 generation_result=None
             )
-            return ExtractOp(filter_op=filter_op, parse_op=parse_op, content=None)
+            
+            # Create rich ExtractOp with failure details
+            return ExtractOp.from_operations(
+                filter_op=filter_op,
+                parse_op=parse_op,
+                start_time=extraction_start_time,
+                content=None
+            )
 
-        # Phase-2: parsing
+        # Phase-2: Parsing
+        print("🔧 Starting parse phase...")
         parse_op = self.parse_hero.run(
             filter_op.content, 
             extraction_spec,
             enforce_llm_based_parse=enforce_llm_based_parse
         )
         
-        return ExtractOp(
+        print(f"✅ Parse phase completed - Success: {parse_op.success}")
+        
+        # Create rich ExtractOp with all metrics
+        result = ExtractOp.from_operations(
             filter_op=filter_op,
             parse_op=parse_op,
-            content=parse_op.content,
+            start_time=extraction_start_time,
+            content=parse_op.content if parse_op.success else None
         )
+        
+        print(f"🎯 Extraction completed in {result.elapsed_time:.3f}s - Overall success: {result.success}")
+        
+        return result
     
     # ─────────────────── extraction (async) ──────────────────
     async def extract_async(
@@ -99,7 +136,23 @@ class ExtractHero:
         enforce_llm_based_parse: bool = False,
         filter_separately: bool = False,
     ) -> ExtractOp:
-        """Async end-to-end pipeline."""
+        """
+        Async end-to-end extraction pipeline with rich metrics.
+        
+        Same parameters as extract() but runs asynchronously for high-throughput scenarios.
+        Particularly useful when filter_separately=True for concurrent processing.
+        
+        Returns
+        -------
+        ExtractOp
+            Rich result object with content, timing, usage, and error details
+        """
+        # ⏱️ Start timing the entire extraction operation
+        extraction_start_time = time()
+        
+        print("🔍 Starting async filter phase...")
+        
+        # Phase-1: Async Filtering
         filter_op: FilterOp = await self.filter_hero.run_async(
             text,
             extraction_spec,
@@ -108,30 +161,51 @@ class ExtractHero:
             reduce_html=reduce_html,
             enforce_llm_based_filter=enforce_llm_based_filter,
         )
+        
+        print(f"✅ Async filter phase completed - Success: {filter_op.success}")
 
+        # Check if filter phase failed
         if not filter_op.success:
+            print("❌ Async filter phase failed, short-circuiting parse phase")
+            
             parse_op = ParseOp.from_result(
                 config=self.config,
                 content=None,
                 usage=None,
                 start_time=time(),
                 success=False,
-                error="Filter phase failed",
+                error="Filter phase failed - parse not attempted",
                 generation_result=None
             )
-            return ExtractOp(filter_op=filter_op, parse_op=parse_op, content=None)
+            
+            return ExtractOp.from_operations(
+                filter_op=filter_op,
+                parse_op=parse_op,
+                start_time=extraction_start_time,
+                content=None
+            )
 
+        # Phase-2: Async Parsing
+        print("🔧 Starting async parse phase...")
         parse_op = await self.parse_hero.run_async(
             filter_op.content, 
             extraction_spec,
             enforce_llm_based_parse=enforce_llm_based_parse
         )
         
-        return ExtractOp(
-            filter_op=filter_op, 
-            parse_op=parse_op, 
-            content=parse_op.content
+        print(f"✅ Async parse phase completed - Success: {parse_op.success}")
+        
+        # Create rich ExtractOp with all metrics
+        result = ExtractOp.from_operations(
+            filter_op=filter_op,
+            parse_op=parse_op,
+            start_time=extraction_start_time,
+            content=parse_op.content if parse_op.success else None
         )
+        
+        print(f"🎯 Async extraction completed in {result.elapsed_time:.3f}s - Overall success: {result.success}")
+        
+        return result
 
 
 

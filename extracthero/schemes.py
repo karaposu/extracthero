@@ -239,7 +239,7 @@ class FilterOp:
     config: ExtractConfig           # The ExtractConfig used for this filter run
     reduced_html: Optional[str]     # Reduced HTML (if HTMLReducer was applied)
     html_reduce_op:     Optional[Any] = None   # holds the full Domreducer ReduceOperation object
-  
+    generation_result: Any =None
     error: Optional[str] = None   
 
     @classmethod

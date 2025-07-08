@@ -386,9 +386,6 @@ if __name__ == "__main__":
         print("No HTML reduction applied (input was dict/JSON fast-path).")
     print(" ")
     
- 
-    
-    
 
     print("Filtered corpus: ⬇")
     print(" ")

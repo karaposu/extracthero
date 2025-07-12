@@ -1,24 +1,21 @@
 # extracthero/parsehero.py
+
 # run with: python -m extracthero.parsehero
-
-
 """
 ParseHero — the "parse" phase of ExtractHero.
-  • Converts a filtered corpus into structured data keyed by WhatToRetain specs.
-  • Skips the LLM when the corpus is already a dict, unless you force it.
-  • Performs per-field regex validation after parsing.
-  • Returns a ParseOp.
+- Converts a filtered corpus into structured data keyed by WhatToRetain specs.
+- Uses ParseEngine for core parsing logic.
+- Returns a ParseOp.
 """
 
 from __future__ import annotations
 
-import json as _json
 from time import time
-from typing import Any, Dict, List, Optional, Tuple, Union
+from typing import Any, Dict, List, Optional, Union
 
-from llmservice.generation_engine import GenerationResult
 from extracthero.myllmservice import MyLLMService
 from extracthero.schemes import ExtractConfig, ParseOp, WhatToRetain
+from extracthero.parse_engine import ParseEngine
 
 import warnings
 warnings.filterwarnings(
@@ -29,7 +26,8 @@ warnings.filterwarnings(
 
 
 class ParseHero:
-    # ───────────────────────── init ─────────────────────────
+    """High-level parsing orchestrator using ParseEngine for core logic."""
+    
     def __init__(
         self,
         config: Optional[ExtractConfig] = None,
@@ -37,282 +35,239 @@ class ParseHero:
     ):
         self.config = config or ExtractConfig()
         self.llm = llm or MyLLMService()
+        self.engine = ParseEngine(llm_service=self.llm)
 
-    # ───────────────────────── public ───────────────────────
     def run(
         self,
         corpus: str | Dict[str, Any],
         items: WhatToRetain | List[WhatToRetain],
         enforce_llm_based_parse: bool = False,
+        model_name: Optional[str] = None,
     ) -> ParseOp:
         """
         Parse the corpus into structured data using the WhatToRetain specifications.
+        
+        Parameters
+        ----------
+        corpus : str | Dict[str, Any]
+            The filtered corpus to parse (text or dict)
+        items : WhatToRetain | List[WhatToRetain]
+            Specifications for what to extract
+        enforce_llm_based_parse : bool
+            Kept for compatibility (always uses LLM now)
+        model_name : Optional[str]
+            Specific model to use (default: gpt-4o-mini)
+            
+        Returns
+        -------
+        ParseOp
+            Parsing operation result with extracted content
         """
         start_ts = time()
 
-        # Fast-path for dict inputs (unless LLM is enforced)
-        if isinstance(corpus, dict):
-            if not enforce_llm_based_parse:
-                parsed_values_dict = self.make_new_dict_by_parsing_keys_with_their_values(corpus, items)
-                return ParseOp.from_result(
-                    config=self.config,
-                    content=parsed_values_dict,
-                    usage=None,
-                    start_time=start_ts,
-                    success=True,
-                    generation_result=None  # No LLM was used
-                )
-            # If enforce_llm_based_parse=True, fall through to LLM processing
+        # Use ParseEngine for core logic
+        generation_result = self.engine.execute_parsing(
+            corpus=corpus,
+            items=items,
+            enforce_llm_based_parse=enforce_llm_based_parse,
+            model_name=model_name
+        )
 
-        # Try to parse string as JSON first
-        elif isinstance(corpus, str):
-            try:
-                corpus_dict = _json.loads(corpus)
-                parsed_values_dict = self.make_new_dict_by_parsing_keys_with_their_values(corpus_dict, items)
-                return ParseOp.from_result(
-                    config=self.config,
-                    content=parsed_values_dict,
-                    usage=None,
-                    start_time=start_ts,
-                    success=True,
-                    generation_result=None  # No LLM was used
-                )
-            except Exception:
-                # Not valid JSON, continue to LLM processing
-                pass
-
-        # If we reach here, we need to use LLM to parse the corpus
-        
-        # Build prompt from WhatToRetain specifications
-        if isinstance(items, WhatToRetain):
-            prompt = items.compile_parser()
-        else:
-            prompt = "\n\n".join(it.compile_parser() for it in items)
-
-        # Call LLM for parsing
-        model = "gpt-4o"
-        # model = "gpt-4o-mini"
-        generation_result = self.llm.parse_via_llm(corpus, prompt, model=model)
-
-        if not generation_result.success:
-            return ParseOp.from_result(
-                config=self.config,
-                content=None,
-                usage=generation_result.usage,
-                start_time=start_ts,
-                success=False,
-                error="LLM parse failed",
-                generation_result=generation_result
-            )
-
-        # Return successful parse result
+        # Build ParseOp result
         return ParseOp.from_result(
             config=self.config,
             content=generation_result.content,
             usage=generation_result.usage,
             start_time=start_ts,
-            success=True,
-            error=None,
+            success=generation_result.success,
+            error=generation_result.error_message,
             generation_result=generation_result
         )
 
-    # ───────────────────── helper utilities ─────────────────────
-    @staticmethod
-    def make_new_dict_by_parsing_keys_with_their_values(
-        data: Dict[str, Any],
-        items: WhatToRetain | List[WhatToRetain],
-    ) -> Dict[str, Any]:
-        """Extract only the specified keys from the data dictionary."""
-        keys = [items.name] if isinstance(items, WhatToRetain) else [it.name for it in items]
-        return {k: data.get(k) for k in keys}
-
-    # ───────────────────────── public (async) ───────────────────────
     async def run_async(
         self,
         corpus: str | Dict[str, Any],
         items: WhatToRetain | List[WhatToRetain],
         enforce_llm_based_parse: bool = False,
+        model_name: Optional[str] = None,
     ) -> ParseOp:
         """
         Async version of run method.
+        
+        Parameters
+        ----------
+        corpus : str | Dict[str, Any]
+            The filtered corpus to parse (text or dict)
+        items : WhatToRetain | List[WhatToRetain]
+            Specifications for what to extract
+        enforce_llm_based_parse : bool
+            Kept for compatibility (always uses LLM now)
+        model_name : Optional[str]
+            Specific model to use (default: gpt-4o-mini)
+            
+        Returns
+        -------
+        ParseOp
+            Parsing operation result with extracted content
         """
         start_ts = time()
 
-        # Fast-path for dict inputs (unless LLM is enforced)
-        if isinstance(corpus, dict):
-            if not enforce_llm_based_parse:
-                parsed_values_dict = self.make_new_dict_by_parsing_keys_with_their_values(corpus, items)
-                return ParseOp.from_result(
-                    config=self.config,
-                    content=parsed_values_dict,
-                    usage=None,
-                    start_time=start_ts,
-                    success=True,
-                    generation_result=None  # No LLM was used
-                )
+        # Use ParseEngine for core async logic
+        generation_result = await self.engine.execute_parsing_async(
+            corpus=corpus,
+            items=items,
+            enforce_llm_based_parse=enforce_llm_based_parse,
+            model_name=model_name
+        )
 
-        # Try to parse string as JSON first
-        elif isinstance(corpus, str):
-            try:
-                corpus_dict = _json.loads(corpus)
-                parsed_values_dict = self.make_new_dict_by_parsing_keys_with_their_values(corpus_dict, items)
-                return ParseOp.from_result(
-                    config=self.config,
-                    content=parsed_values_dict,
-                    usage=None,
-                    start_time=start_ts,
-                    success=True,
-                    generation_result=None  # No LLM was used
-                )
-            except Exception:
-                # Not valid JSON, continue to LLM processing
-                pass
-
-        # Build prompt from WhatToRetain specifications
-        if isinstance(items, WhatToRetain):
-            prompt = items.compile()
-        else:
-            prompt = "\n\n".join(it.compile() for it in items)
-
-        # Call async LLM for parsing
-        generation_result: GenerationResult = await self.llm.parse_via_llm_async(corpus, prompt)
-        
-        if not generation_result.success:
-            return ParseOp.from_result(
-                config=self.config,
-                content=None,
-                usage=generation_result.usage,
-                start_time=start_ts,
-                success=False,
-                error="LLM parse failed",
-                generation_result=generation_result
-            )
-
-        # Return successful parse result
+        # Build ParseOp result
         return ParseOp.from_result(
             config=self.config,
             content=generation_result.content,
             usage=generation_result.usage,
             start_time=start_ts,
-            success=True,
-            error=None,
+            success=generation_result.success,
+            error=generation_result.error_message,
             generation_result=generation_result
         )
 
 
+# ────────────────────────── Usage Examples ───────────────────────────────
 
-# ────────────────────────── demo ───────────────────────────
-def main() -> None:
-    cfg = ExtractConfig()
-    hero = ParseHero(cfg)
-
-    # items = [
-    #     WhatToRetain(name="title", desc="Product title"),
-    #     WhatToRetain(name="price", desc="Product price"),
-    # ]
-
-
-    # result dict should have a field called product 
+def example_usage():
+    """Examples of using ParseHero."""
+    
+    from extracthero.utils import load_html
+    
+    hero = ParseHero()
+    
+    # Define what to extract
     items = [
-       #WhatToRetain(name="product", desc="Product info in plain text format, not json, DO NOT JSONIFY THIS PART!"),
-       
-        #  WhatToRetain(name="product", desc="Product title"),
-
-         WhatToRetain(name="product_title", desc="Product title"),
-         WhatToRetain(name="product_rating", desc="Product rating"),
-        #  WhatToRetain(name="product_title"),
-        # WhatToRetain(name="product", desc="Product info in SEO friendly format"),
-
-        #   WhatToRetain(name="product", desc="Product info" , text_rules=["SEO friendly format plain text"]),
-        #  WhatToRetain(name="SEO_mistakes", desc="Product price"),
+        WhatToRetain(
+            name="title", 
+            desc="Product title",
+            example="Wireless Keyboard Pro"
+        ),
+        WhatToRetain(
+            name="price", 
+            desc="Product price with currency",
+            example="€49.99"
+        ),
+        WhatToRetain(
+            name="rating", 
+            desc="Product rating",
+            example="4.5"
+        ),
     ]
     
-    # 'product': title is Wireless Keyboard Pro and  price: €49.99,  list-price: €59.99,  rating: 4.5 ★  the availability: In Stock
-
+    print("🦸 ParseHero Examples")
+    print("=" * 50)
     
-
-    
-    # filtered_text = """
-    #     title: Wireless Keyboard Pro and  price: €49.99
-    #     list-price: €59.99
-    #     rating: 4.5 ★  the availability: In Stock
-    #     delivery: Free next-day
-    #     ---
-    #     title: USB-C Hub (6-in-1)
-    #     price: €29.50
-    #     availability: Only 3 left!
-    #     rating: 4.1 ★
-    #     ---
-    #     title: Gaming Mouse XT-8 and list_price: $42.00
-    #     price: $35.00
-    #     availability: Out of Stock
-    #     warranty: 2-year limited
-    #     ---
-    #     title: Luggage Big 65 L
-    #     availability: Pre-order (ships in 3 weeks)
-    #     rating: 4.8 ★
-    #     """
-    
+    # Example 1: Parse filtered text
+    print("\n📝 Example 1: Parse Filtered Text")
     filtered_text = """
-        title: Wireless Keyboard Pro and  price: €49.99
-        list-price: €59.99
-        rating: 4.5 ★  the availability: In Stock
-        delivery: Free next-day
-
-
-        title: Fridge New
+    title: Wireless Keyboard Pro
+    price: €49.99
+    rating: 4.5 ★
+    """
+    
+    result = hero.run(filtered_text, items)
+    print(f"Success: {result.success}")
+    print(f"Content: {result.content}")
+    print(f"Elapsed: {result.elapsed_time:.2f}s")
+    if result.usage:
+        print(f"Cost: ${result.usage.get('total_cost', 0):.4f}")
+    
+    # Example 2: Parse dict input
+    print("\n📝 Example 2: Parse Dict Input")
+    dict_data = {
+        "title": "USB-C Hub", 
+        "price": "€29.50", 
+        "rating": "4.1",
+        "extra": "ignored"
+    }
+    
+    result = hero.run(dict_data, items)
+    print(f"Success: {result.success}")
+    print(f"Content: {result.content}")
+    print(f"Model: {result.generation_result.model if result.generation_result else 'None'}")
+    
+    # Example 3: Parse HTML snippet
+    print("\n📝 Example 3: Parse HTML Snippet")
+    html_snippet = """
+    <div class="product">
+        <h2 class="title">Gaming Mouse</h2>
+        <span class="price">€35.00</span>
+        <div class="rating">4.8/5</div>
+    </div>
+    """
+    
+    result = hero.run(html_snippet, items)
+    print(f"Success: {result.success}")
+    print(f"Content: {result.content}")
+    
+    # Example 4: Single item extraction
+    print("\n📝 Example 4: Single Item Extraction")
+    single_item = WhatToRetain(name="title", desc="Product title only")
+    
+    result = hero.run(filtered_text, single_item)
+    print(f"Success: {result.success}")
+    print(f"Content: {result.content}")
+    
+    # Example 5: Custom model
+    print("\n📝 Example 5: Custom Model (gpt-4)")
+    result = hero.run(filtered_text, items, model_name="gpt-4")
+    print(f"Success: {result.success}")
+    print(f"Model: {result.generation_result.model if result.generation_result else 'None'}")
+    
+    # Example 6: Real HTML file (if exists)
+    print("\n📝 Example 6: Real HTML File")
+    try:
+        html_doc = load_html("extracthero/real_life_samples/1/reduced_html.txt")
+        voltage_spec = WhatToRetain(
+            name="voltage", 
+            desc="voltage specifications",
+            example="5V, 3.3V"
+        )
         
-        """
+        result = hero.run(html_doc[:500], voltage_spec)  # Using first 500 chars
+        print(f"Success: {result.success}")
+        print(f"Content: {result.content}")
+    except Exception as e:
+        print(f"Could not load HTML file: {e}")
     
+    print("\n✨ ParseHero examples completed!")
 
 
-    extraction_spec = [
-            WhatToRetain(
-                name="title",
-                desc="Product title",
-                example="Wireless Keyboard"
-            ),
-            WhatToRetain(
-                name="price",
-                desc="Product price with currency symbol",
-                example="€49.99"
-            )
-        ]
+async def example_async_usage():
+    """Async usage examples."""
     
-    filtered_text2  ="""
-            ```html
-        <div class="product">
-        <h2 class="title">Wireless Keyboard</h2>
-        <span class="price">&euro;49.99</span>
-        <p class="description">Compact wireless keyboard with RGB lighting</p>
-        </div>
-        <div class="product">
-        <h2 class="title">USB-C Hub</h2>
-        <span class="price">&euro;29.50</span>
-        <p class="description">7-in-1 USB-C hub with HDMI output</p>
-        </div>
-        ```
-        """
+    hero = ParseHero()
+    items = [
+        WhatToRetain(name="title", desc="Product title"),
+        WhatToRetain(name="price", desc="Product price"),
+    ]
     
+    print("\n🚀 Async ParseHero Example")
+    print("=" * 50)
     
-    p_op = hero.run(filtered_text2, extraction_spec, enforce_llm_based_parse=True)
-    print("Success:", p_op.success)
-    
-    #print(p_op.content)
-    print(" " )
-    parsed_dict=p_op.content
-    if isinstance(parsed_dict, list):
-        print("List elements:" )
-        for e in parsed_dict:
-            print(e)
-    else:
-        print("Parsed dict:", parsed_dict)
-    
-    print(" ")
-    print(" ")
-    # print("pipeline_steps_results=",  p_op.generation_result.pipeline_steps_results)
-   
+    # Async parsing
+    text = "title: Gaming Headset\nprice: €79.99"
+    result = await hero.run_async(text, items)
+    print(f"Async Success: {result.success}")
+    print(f"Async Content: {result.content}")
 
+
+# ────────────────────────── Main Demo ───────────────────────────────
 
 if __name__ == "__main__":
-    main()
+    import asyncio
+    
+    
+    
+    # Run sync examples
+    example_usage()
+    
+    # # Run async example
+    # print("\n" + "=" * 50)
+    # asyncio.run(example_async_usage())

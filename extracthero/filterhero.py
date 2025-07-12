@@ -8,7 +8,7 @@ FilterHero — the "filter" phase of ExtractHero.
 """
 
 from __future__ import annotations
-
+import tiktoken
 import json as _json
 from dataclasses import dataclass
 from time import time
@@ -21,12 +21,17 @@ from extracthero.schemes import (
     FilterOp,
     CorpusPayload,   
     WhatToRetain, 
-    ProcessResult
+    ProcessResult,
+    FilterChainOp
+
 )
 
-from domreducer import HtmlReducer
-from string2dict import String2Dict
 from extracthero.utils import load_html
+from extracthero.sample_dicts import sample_page_dict
+import asyncio
+
+from extracthero.filter_engine import FilterEngine
+
 
 
 import warnings
@@ -35,6 +40,10 @@ warnings.filterwarnings(
     category=RuntimeWarning,
     message=".*extracthero.filterhero.*"
 )
+
+
+encoding = tiktoken.encoding_for_model("gpt-4o-mini")
+
 
 
 
@@ -48,321 +57,412 @@ class FilterHero:
         self.config = config or ExtractConfig()
         self.llm = llm or MyLLMService()
 
-        self.html_reducer_op=None
+        self.engine= FilterEngine(llm_service=self.llm)
 
     # ──────────────────────── public orchestrator ────────────────────────
     def run(
         self,
         text: str | Dict[str, Any],
         extraction_spec: WhatToRetain | List[WhatToRetain],
-        text_type: Optional[str] = None,
-        filter_separately: bool = False,
-        reduce_html: bool = True,
-        enforce_llm_based_filter: bool = False,
+    
+        filter_strategy: str = "liberal",  
     ) -> FilterOp:
         """
         End-to-end filter phase.
         """
         ts = time()
-       
-        # 1) Pre-process (HTML reduction / JSON parsing / pass-through)
-        payload = self._prepare_corpus(text, text_type, reduce_html)
+        content=None
 
-        if payload.error:
-            return FilterOp.from_result(
-                config=self.config,
-                content=None,
-                usage=None,
-                reduced_html=payload.reduced_html,
-                start_time=ts,
-                success=False,
-                error=payload.error,
-            )
-
-        # 2) Handle JSON fast-path or stringify payload for LLM
-        proc = self.process_corpus_payload(
-            payload, extraction_spec, enforce_llm_based_filter, ts
-        )
-        if proc.fast_op is not None:                     # shortcut hit
-            return proc.fast_op
-
-        # 3) Dispatch LLM calls
-        gen_results = self._dispatch(proc.corpus, extraction_spec, filter_separately)
-
-        # 4) Success flag
-        ok = (
-            gen_results[0].success
-            if isinstance(extraction_spec, WhatToRetain) or not filter_separately
-            else all(r.success for r in gen_results)
+        gen_result = self.engine.execute_filtering(
+            text, 
+            extraction_spec, 
+            filter_strategy  
         )
 
-        # 5) Aggregate content + usage
-        content, usage = self._aggregate(gen_results, extraction_spec, filter_separately)
+        if gen_result.success:
+           content=gen_result.content
+           # gen_result.content, gen_result.usage 
+           if content is not None:
+            try:
+                
+                filtered_data_token_size = len(encoding.encode(content))
+            except Exception as e:
+                filtered_data_token_size = None
 
-        # 6) Determine which generation_result to store
-        # For single result or combined prompt, use first result
-        # For multiple separate results, store the first one (could be modified to store all)
-        primary_generation_result = gen_results[0] if gen_results else None
-
+        
         # 7) Wrap & return
         return FilterOp.from_result(
             config=self.config,
             content=content,
-            usage=usage,
-            reduced_html=proc.reduced,
-            html_reduce_op=self.html_reducer_op,
-            generation_result=primary_generation_result,  # ← Pass the generation result here
+            usage=gen_result.usage,
+            generation_result=gen_result,  # ← Pass the generation result here
             start_time=ts,
-            success=ok,
-            error=None if ok else "LLM filter failed",
+            success=gen_result.success,
+            error=None if gen_result.success else "LLM filter failed",
+            filtered_data_token_size=filtered_data_token_size,
+            filter_strategy=filter_strategy
         )
-
-    # ─────────────────────── helper: preprocessing ───────────────────────
-    def _prepare_corpus(
-        self,
-        text: str | Dict[str, Any],
-        text_type: Optional[str],
-        reduce_html: bool,
-    ) -> CorpusPayload:
-        """Return CorpusPayload(corpus, corpus_type, reduced_html, error)"""
-
-        # HTML branch
-        if text_type == "html":
-            if reduce_html:
-                op = HtmlReducer(str(text)).reduce()
-                
-                self.html_reducer_op=op
-                return CorpusPayload(
-                    corpus=op.reduced_data if op.success else str(text),
-                    corpus_type="html",
-                    reduced_html=op.reduced_data if op.success else None,
-                
-                )
-            return CorpusPayload(corpus=str(text), corpus_type="html", reduced_html=None)
-
-        # JSON branch
-        if text_type == "json":
-            parsed = String2Dict().run(str(text))
-            if parsed is None:
-                return CorpusPayload(
-                    corpus=None,
-                    corpus_type="json",
-                    reduced_html=None,
-
-                    error="Invalid JSON input",
-                )
-            return CorpusPayload(corpus=parsed, corpus_type="json", reduced_html=None)
-
-        # dict branch
-        if text_type == "dict":
-            if not isinstance(text, dict):
-                return CorpusPayload(
-                    corpus=None,
-                    corpus_type="json",
-                    reduced_html=None,
-                    error="dict type mismatch",
-                )
-            return CorpusPayload(corpus=text, corpus_type="json", reduced_html=None)
-
-        # plain text branch
-        return CorpusPayload(corpus=str(text), corpus_type="text", reduced_html=None)
-
-    # ───────────── helper: JSON shortcut or corpus stringification ─────────────
-    def process_corpus_payload(
-        self,
-        payload: CorpusPayload,
-        items: WhatToRetain | List[WhatToRetain],
-        enforce_llm: bool,
-        ts: float,
-    ) -> ProcessResult:
-        """
-        • If JSON and not forced → return FilterOp shortcut.  
-        • Else → make sure corpus is a *string* for LLM.
-        """
-        # JSON / dict
-        if payload.corpus_type == "json":
-            data: Dict[str, Any] = payload.corpus  # already dict
-
-            if not enforce_llm:
-                keys = (
-                    [items.name]
-                    if isinstance(items, WhatToRetain)
-                    else [it.name for it in items]
-                )
-                subset = {k: data.get(k) for k in keys}
-                fast = FilterOp.from_result(
-                    config=self.config,
-                    content=subset,
-                    usage=None,
-                    reduced_html=None,
-                    start_time=ts,
-                    success=True,
-                    error=None,
-                )
-                return ProcessResult(fast, None, None)
-
-            # fallback: stringify dict for LLM
-            return ProcessResult(None, self._stringify_json(data), None)
-
-        # HTML / text
-        return ProcessResult(None, str(payload.corpus), payload.reduced_html)
-
-    # ───────────── helper: dispatch to LLM ─────────────
-    def _dispatch(
-        self,
-        corpus_str: str,
-        items: WhatToRetain | List[WhatToRetain],
-        separate: bool,
-    ) -> List[GenerationResult]:
-        """
-        Dispatch LLM calls and return list of GenerationResult objects.
-        """
-        it_list = [items] if isinstance(items, WhatToRetain) else items
-        
-        if len(it_list) == 1 or not separate:
-            # Combined prompt approach
-            prompt = "\n\n".join(it.compile() for it in it_list)
-            generation_result = self.llm.filter_via_llm(corpus_str, prompt)
-            return [generation_result]
-
-        # Separate calls approach
-        generation_results = []
-        for it in it_list:
-            generation_result = self.llm.filter_via_llm(corpus_str, it.compile())
-            generation_results.append(generation_result)
-        
-        return generation_results
-
-    # ───────────── helper: aggregate results ─────────────
-    def _aggregate(
-        self,
-        gen_results: List[GenerationResult],
-        items: WhatToRetain | List[WhatToRetain],
-        separate: bool,
-    ) -> Tuple[Any, Optional[Dict[str, int]]]:
-
-        if isinstance(items, WhatToRetain) or not separate:
-            first = gen_results[0]
-            return first.content, first.usage
-
-        names = [it.name for it in items]
-        content_map = {n: r.content for n, r in zip(names, gen_results)}
-
-        usage_tot: Dict[str, int] = {}
-        for r in gen_results:
-            if r.usage:
-                for k, v in r.usage.items():
-                    usage_tot[k] = usage_tot.get(k, 0) + v
-        return content_map, usage_tot or None
-
-    # ───────────── helper: JSON→string ─────────────
-    @staticmethod
-    def _stringify_json(data: Dict[str, Any]) -> str:
-        return _json.dumps(data, ensure_ascii=False, indent=2)
     
-
 
     async def run_async(
         self,
         text: str | Dict[str, Any],
         extraction_spec: WhatToRetain | List[WhatToRetain],
-        text_type: Optional[str] = None,
-        filter_separately: bool = False,
-        reduce_html: bool = True,
-        enforce_llm_based_filter: bool = False,
+        filter_strategy: str = "contextual",
     ) -> FilterOp:
-        """
-        Async version of run method. All parameters identical to sync version.
-        """
+        """Async end-to-end filter phase."""
         ts = time()
-
-        # 1) preprocess
-        payload = self._prepare_corpus(text, text_type, reduce_html)
-        if payload.error:
-            return FilterOp.from_result(
-                config=self.config,
-                content=None,
-                usage=None,
-                reduced_html=payload.reduced_html,
-                start_time=ts,
-                success=False,
-                error=payload.error,
-            )
-
-        # 2) dict fast-path unless forced
-        proc = self.process_corpus_payload(
-            payload, extraction_spec, enforce_llm_based_filter, ts
-        )
-        if proc.fast_op is not None:
-            return proc.fast_op
-
-        # 3) ensure string for LLM
-        corpus_for_llm: str = (
-            self._stringify_json(payload.corpus)
-            if payload.corpus_type == "json"
-            else str(payload.corpus)
+        content = None
+        
+        # This would need FilterEngine.execute_filtering_async() to be implemented
+        gen_result = await self.engine.execute_filtering_async(
+            text, 
+            extraction_spec, 
+            filter_strategy  
         )
 
-        # 4) dispatch async LLM calls
-        gen_results = await self._dispatch_async(
-            corpus_for_llm, extraction_spec, filter_separately
-        )
+        if gen_result.success:
+            content = gen_result.content
+            if content is not None:
+                try:
+                    filtered_data_token_size = len(encoding.encode(content))
+                except Exception as e:
+                    filtered_data_token_size = None
 
-        # 5) success flag
-        ok = (
-            gen_results[0].success
-            if isinstance(extraction_spec, WhatToRetain) or not filter_separately
-            else all(r.success for r in gen_results)
-        )
-
-        # 6) aggregate
-        content_final, usage_final = self._aggregate(
-            gen_results, extraction_spec, filter_separately
-        )
-
-        # 7) get primary generation result
-        primary_generation_result = gen_results[0] if gen_results else None
-
-        # 8) wrap
         return FilterOp.from_result(
             config=self.config,
-            content=content_final,
-            usage=usage_final,
-            reduced_html=proc.reduced,
-            html_reduce_op=self.html_reducer_op,
-            generation_result=primary_generation_result,
+            content=content,
+            usage=gen_result.usage,
+            generation_result=gen_result,
             start_time=ts,
-            success=ok,
-            error=None if ok else "LLM filter failed",
+            success=gen_result.success,
+            error=None if gen_result.success else "LLM filter failed",
+            filtered_data_token_size=filtered_data_token_size,
+            filter_strategy=filter_strategy
         )
+    
 
-    # ───────────────────── helper (async dispatch) ─────────────────────
-    async def _dispatch_async(
+    def _combine_usage(self, usage_list: List[Dict[str, Any]]) -> Optional[Dict[str, Any]]:
+        """Combine usage dictionaries from multiple stages."""
+        if not usage_list:
+            return None
+        
+        combined = {}
+        
+        # Sum numeric values
+        for usage in usage_list:
+            for key, value in usage.items():
+                if isinstance(value, (int, float)):
+                    combined[key] = combined.get(key, 0) + value
+                elif key not in combined:
+                    # For non-numeric values, keep the first occurrence
+                    combined[key] = value
+        
+        return combined if combined else None
+    
+
+    def _calculate_reduction_details(
+        self, 
+        filter_ops: List[FilterOp], 
+        initial_content: str
+    ) -> List[Dict[str, int]]:
+        """Calculate token reduction details for each stage."""
+        reduction_details = []
+        encoding = tiktoken.encoding_for_model("gpt-4o-mini")
+        
+        try:
+            # Calculate initial token size
+            current_content = initial_content
+            current_token_size = len(encoding.encode(current_content))
+            
+            for op in filter_ops:
+                if op.success and op.content:
+                    new_token_size = len(encoding.encode(op.content))
+                    reduction_details.append({
+                        "source_token_size": current_token_size,
+                        "filtered_token_size": new_token_size
+                    })
+                    current_content = op.content
+                    current_token_size = new_token_size
+                else:
+                    # Failed operation - no reduction
+                    reduction_details.append({
+                        "source_token_size": current_token_size,
+                        "filtered_token_size": current_token_size
+                    })
+        
+        except Exception:
+            # If token calculation fails, return empty list
+            reduction_details = []
+        
+        return reduction_details
+    
+
+    def chain(
         self,
-        corpus_str: str,
-        items: WhatToRetain | List[WhatToRetain],
-        separate: bool,
-    ) -> List[GenerationResult]:
+        text: str | Dict[str, Any],
+        stages: List[Tuple[List[WhatToRetain], str]],
+    ) -> FilterChainOp:
         """
-        Async version of _dispatch. Returns list of GenerationResult objects.
+        Chain multiple filter operations synchronously.
+        
+        Parameters
+        ----------
+        text : str | Dict[str, Any]
+            Initial input
+        stages : List[Tuple[List[WhatToRetain], str]]
+            List of (extraction_spec, filter_strategy) tuples
+            
+        Returns
+        -------
+        FilterChainOp
+            Complete result of the filter chain
         """
-        item_list = [items] if isinstance(items, WhatToRetain) else items
+        start_time = time()
+        filter_ops = []
+        current_input = text
+        
+        # Convert initial input to string if needed
+        if isinstance(text, dict):
+            initial_content = str(text)  # You might want to JSON serialize this
+        else:
+            initial_content = text
+        
+        # Execute each stage
+        for extraction_spec, filter_strategy in stages:
+            filter_op = self.run(current_input, extraction_spec, filter_strategy)
+            filter_ops.append(filter_op)
+            
+            if not filter_op.success:
+                break  # Stop on first failure
+                
+            current_input = filter_op.content
+        
+        # Build the result
+        if not filter_ops:
+            return FilterChainOp(
+                success=False,
+                content=None,
+                elapsed_time=time() - start_time,
+                generation_results=[],
+                usage=None,
+                error="No filter operations completed",
+                start_time=start_time,
+                filtered_data_token_size=None,
+                stages_config=stages,
+                reduction_details=[],
+                filterops=[]
+            )
+        
+        # Determine overall success (all stages must succeed)
+        overall_success = all(op.success for op in filter_ops)
+        
+        # Get final content (from last successful operation)
+        final_content = None
+        for op in reversed(filter_ops):
+            if op.success and op.content:
+                final_content = op.content
+                break
+        
+        # Calculate final token size
+        encoding = tiktoken.encoding_for_model("gpt-4o-mini")
+        final_token_size = None
+        if final_content:
+            try:
+                final_token_size = len(encoding.encode(final_content))
+            except Exception:
+                final_token_size = None
+        
+        # Combine usage from all stages
+        combined_usage = self._combine_usage([op.usage for op in filter_ops if op.usage])
+        
+        # Extract generation results
+        generation_results = [op.generation_result for op in filter_ops if op.generation_result]
+        
+        # Calculate reduction details
+        reduction_details = self._calculate_reduction_details(filter_ops, initial_content)
+        
+        # Determine error message
+        error_message = None
+        if not overall_success:
+            failed_ops = [op for op in filter_ops if not op.success]
+            if failed_ops:
+                error_message = f"Stage {filter_ops.index(failed_ops[0]) + 1} failed: {failed_ops[0].error}"
+        
+        return FilterChainOp(
+            success=overall_success,
+            content=final_content,
+            elapsed_time=time() - start_time,
+            generation_results=generation_results,
+            usage=combined_usage,
+            error=error_message,
+            start_time=start_time,
+            filtered_data_token_size=final_token_size,
+            stages_config=stages,
+            reduction_details=reduction_details,
+            filterops=filter_ops
+        )
+    
 
-        # combined prompt (one call)
-        if len(item_list) == 1 or not separate:
-            prompt = "\n\n".join(it.compile() for it in item_list)
-            generation_result = await self.llm.filter_via_llm_async(corpus_str, prompt)
-            return [generation_result]
+    
 
-        # separate=True & multiple items → gather concurrently
-        import asyncio
+    
 
-        async def one(it: WhatToRetain):
-            return await self.llm.filter_via_llm_async(corpus_str, it.compile())
+    async def chain_async(
+        self,
+        text: str | Dict[str, Any],
+        stages: List[Tuple[List[WhatToRetain], str]],
+    ) -> FilterChainOp:
+        """
+        Chain multiple filter operations asynchronously.
+        
+        Parameters
+        ----------
+        text : str | Dict[str, Any]
+            Initial input
+        stages : List[Tuple[List[WhatToRetain], str]]
+            List of (extraction_spec, filter_strategy) tuples
+            
+        Returns
+        -------
+        FilterChainOp
+            Complete result of the filter chain
+        """
+        start_time = time()
+        filter_ops = []
+        current_input = text
+        
+        # Convert initial input to string if needed
+        if isinstance(text, dict):
+            initial_content = str(text)  # You might want to JSON serialize this
+        else:
+            initial_content = text
+        
+        # Execute each stage
+        for extraction_spec, filter_strategy in stages:
+            filter_op = await self.run_async(current_input, extraction_spec, filter_strategy)
+            filter_ops.append(filter_op)
+            
+            if not filter_op.success:
+                break  # Stop on first failure
+                
+            current_input = filter_op.content
+        
+        # Build the result (same logic as sync version)
+        if not filter_ops:
+            return FilterChainOp(
+                success=False,
+                content=None,
+                elapsed_time=time() - start_time,
+                generation_results=[],
+                usage=None,
+                error="No filter operations completed",
+                start_time=start_time,
+                filtered_data_token_size=None,
+                stages_config=stages,
+                reduction_details=[],
+                filterops=[]
+            )
+        
+        # Determine overall success
+        overall_success = all(op.success for op in filter_ops)
+        
+        # Get final content
+        final_content = None
+        for op in reversed(filter_ops):
+            if op.success and op.content:
+                final_content = op.content
+                break
+        
+        # Calculate final token size
+        encoding = tiktoken.encoding_for_model("gpt-4o-mini")
+        final_token_size = None
+        if final_content:
+            try:
+                final_token_size = len(encoding.encode(final_content))
+            except Exception:
+                final_token_size = None
+        
+        # Combine usage and build results
+        combined_usage = self._combine_usage([op.usage for op in filter_ops if op.usage])
+        generation_results = [op.generation_result for op in filter_ops if op.generation_result]
+        reduction_details = self._calculate_reduction_details(filter_ops, initial_content)
+        
+        # Error handling
+        error_message = None
+        if not overall_success:
+            failed_ops = [op for op in filter_ops if not op.success]
+            if failed_ops:
+                error_message = f"Stage {filter_ops.index(failed_ops[0]) + 1} failed: {failed_ops[0].error}"
+        
+        return FilterChainOp(
+            success=overall_success,
+            content=final_content,
+            elapsed_time=time() - start_time,
+            generation_results=generation_results,
+            usage=combined_usage,
+            error=error_message,
+            start_time=start_time,
+            filtered_data_token_size=final_token_size,
+            stages_config=stages,
+            reduction_details=reduction_details,
+            filterops=filter_ops
+        )
+    
 
-        tasks = [asyncio.create_task(one(it)) for it in item_list]
-        generation_results = await asyncio.gather(*tasks)
-        return generation_results
+
+
+
+def example_chain_usage():
+    filter_hero = FilterHero()
+
+    html_doc = load_html("extracthero/real_life_samples/1/nexperia-aa4afebbd10348ec91358f07facf06f1.html")
+    
+    
+    stages = [
+        ([WhatToRetain(name="voltage", desc="all voltage information")], "contextual"),
+        # ([WhatToRetain(name="voltage", desc="only voltage related information")], "inclusive"),
+        # ([WhatToRetain(name="voltage", desc="only voltage related information")], "contextual"),
+        ([WhatToRetain(name="voltage", desc="only voltage related information")], "base"),
+    
+    ]
+    
+    chain_result = filter_hero.chain(html_doc, stages)
+    
+    if chain_result.success:
+        print(f"Final content: {chain_result.content}")
+        print(f"Total elapsed time: {chain_result.elapsed_time:.2f}s")
+        print(f"Final token size: {chain_result.filtered_data_token_size}")
+        print(f"Stages completed: {len(chain_result.stages_config)}")
+        
+        # Print stage info
+        for i, (extraction_spec, filter_strategy) in enumerate(chain_result.stages_config):
+            spec_names = [spec.name for spec in extraction_spec]
+            print(f"Stage {i+1}: {spec_names} using '{filter_strategy}' strategy")
+        
+        # Print individual stage results
+        for i, filter_op in enumerate(chain_result.filterops):
+            status = "✅" if filter_op.success else "❌"
+            print(f"Stage {i+1} {status}: {len(filter_op.content) if filter_op.content else 0} chars, {filter_op.elapsed_time:.2f}s")
+            print("Content: ")
+            print(" ")
+            print(filter_op.content)
+            print(" ")
+            print(" ")
+            print(" ")
+
+
+        # Print reduction details
+        for i, reduction in enumerate(chain_result.reduction_details):
+            reduction_percent = (1 - reduction["filtered_token_size"] / reduction["source_token_size"]) * 100
+            print(f"Stage {i+1}: {reduction['source_token_size']} → {reduction['filtered_token_size']} tokens ({reduction_percent:.1f}% reduction)")
+            
+        # Print total cost
+        if chain_result.usage and "total_cost" in chain_result.usage:
+            print(f"Total cost: ${chain_result.usage['total_cost']:.4f}")
+    else:
+        print(f"Chain failed: {chain_result.error}")
+
 
 
 
@@ -389,76 +489,74 @@ Return the retained chunks exactly as HTML snippets.
 # ─────────────────────────────── demo ───────────────────────────────
 if __name__ == "__main__":
 
-    from extracthero.sample_dicts import sample_page_dict
-    cfg = ExtractConfig()
-    filter_hero = FilterHero(cfg)
+
+    example_chain_usage()
+
+   
+    # cfg = ExtractConfig()
+    # filter_hero = FilterHero(cfg)
     
-    # specs = [
-    #     WhatToRetain(
-    #         name="products",
-    #         desc="  just title and price",
-    #         # wrt_to_source_filter_desc=wrt_to_source_filter_desc,
-    #         include_context_chunk=False,
-    #         # text_rules=[
-    #         #     "productlar cok buyuk olmasin "
-    #         # ]
-    #     )
-       
-    # ]
-
-
-    specs = [
-        WhatToRetain(
-            name="products",
-            desc="  just title and price",
-            # wrt_to_source_filter_desc=wrt_to_source_filter_desc,
-            include_context_chunk=False,
-            # text_rules=[
-            #     "productlar cok buyuk olmasin "
-            # ]
-        )
-       
-    ]
-
-
-
-
-
-    # html_doc = """
+   
+    # html_doc1 = """
     # <html><body>
     #   <div class="product"><h2 class="title">Wireless Keyboard</h2><span class="price">€49.99</span></div>
     #   <div class="product"><h2 class="title">USB-C Hub</h2><span class="price">€29.50</span></div>
     # </body></html>
     # """
+    # html_doc2 = load_html("extracthero/simple_html_sample_2.html")
+    # html_doc3 = load_html("extracthero/real_life_samples/1/nexperia-aa4afebbd10348ec91358f07facf06f1.html")
     
+
+    
+    # specs = [
+    #     WhatToRetain(
+    #         name="product titles",
+    #         desc="listing name of prodct",
+    #         include_context_chunk=False,
+    #     )
+       
+    # ]
+
+
+    # #filter_op = filter_hero.run(html_doc1, specs, filter_strategy="recall")
+
+    
+    # # stages = [
+    # #     ([WhatToRetain(name="voltage", desc="all voltage info")], "contextual"),
+    # #     ([WhatToRetain(name="precise_voltage", desc="only voltage values")], "inclusive"),
+    # # ]
+    
+    # stages_config = [
+    #     (specs, "contextual"),
+    #     (specs, "inclusive"),
+    # ]
+
+
+ 
+    
+    # filter_ops = filter_hero.chain(html_doc3, stages)
+
+    
+    
+    
+    # print("cost: ", filter_op.usage["total_cost"])
+
+    
+    # # print("")
+    # # # print("prompt: ", filter_op.generation_result.generation_request.formatted_prompt)
+
    
-    html_doc = load_html("extracthero/simple_html_sample_2.html")
-    
-    
-    filter_op = filter_hero.run(sample_page_dict, specs, text_type="dict")
-    # filter_op = filter_hero.run(html_doc, specs, text_type="html")
-    # filter_op = filter_hero.run(html_doc, specs, text_type="html", reduce_html=False)
+
+
 
     
-
+    # print("filter_strategy:", filter_op.filter_strategy)
     
-    print("Reduced_html")
-    print(" ")
-    print(filter_op.reduced_html)
-
-    print(" ")
-    print("reducement_details: ")
-   
-    if filter_op.html_reduce_op is not None:
-        print("reducement_details:", filter_op.html_reduce_op.reducement_details)
-        print("token_reducement_percentage:", filter_op.html_reduce_op.token_reducement_percentage)
-    else:
-        print("No HTML reduction applied (input was dict/JSON fast-path).")
-    print(" ")
+    # print("Filtered corpus: ⬇")
+    # print(" ")
+    # print(filter_op.content)
     
-
-    print("Filtered corpus: ⬇")
-    print(" ")
-    print(filter_op.content)
+    # print(" ")
+    # # print(filter_op.start_time)
 
     

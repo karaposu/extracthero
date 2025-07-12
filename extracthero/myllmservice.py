@@ -7,6 +7,10 @@ import asyncio
 from llmservice.base_service import BaseLLMService
 from llmservice.generation_engine import GenerationRequest, GenerationResult
 from typing import Optional, Union
+import json
+from  extracthero import prompts
+
+
 
 
 class MyLLMService(BaseLLMService):
@@ -32,29 +36,15 @@ class MyLLMService(BaseLLMService):
         model = None,
     ) -> GenerationResult:
         
+        
+        user_prompt = prompts.PARSE_VIA_LLM_PROMPT.format(
+            corpus=corpus,
+            parse_keywords=parse_keywords,
+           
+        )
+        
 
-        formatted_prompt = f"""
-Here is the text corpus relevant to our task:
-{corpus}
-
-Here is explicit_dict_keywords which should be used for parsing:
-{parse_keywords}
-
-Task Description:
-Your job is to parse the text into a json format using given explicit_dict_keywords and NOT ANYTHING ELSE. 
-Do NOT add or remove or normalize information. ALSO NEVER impute new fields if related corpus dont have them. Your job is parsing. 
-IF there is no information regarding any explicit_dict_keywords, you must put it's value as None 
-
-If corpus includes  multiple isolated keyword related content, output a list of dict with given keyword. Omit: Do not generate a key in your output JSON when the source text lacked that key.
-ALSO do not add any extra keys or layers other than given explicit_dict_keywords
-
-During parsing only use given designated explicit_dict_keywords 
-
-
-
-Give the output in strict JSON format without HTML TAGS
-
-        """
+       
         
         pipeline_config = [
             {
@@ -66,9 +56,12 @@ Give the output in strict JSON format without HTML TAGS
         
         if model is None:
             model= "gpt-4o-mini"
-
+            # model=  "gpt-4.1-nano"
+          
+           
+        
         generation_request = GenerationRequest(
-            formatted_prompt=formatted_prompt,
+            formatted_prompt=user_prompt,
             model=model,
             output_type="str",
             operation_name="parse_via_llm",
@@ -81,7 +74,75 @@ Give the output in strict JSON format without HTML TAGS
     
 
 
+
+
+    def analyze_individual_filter_prompt_experiment( self, experiment_data, model=None)-> GenerationResult:
+        
+        experiment_data= json.dumps(experiment_data, indent=2)
+
+        user_prompt = prompts.PROMPT_analyze_individual_filter_prompt_experiment.format(
+            experiment_data=experiment_data,
+        
+        )
+
+       
+
+      
     
+         
+        if model is None:
+            model= "o3"
+            
+           
+        
+        generation_request = GenerationRequest(
+            formatted_prompt=user_prompt,
+            model=model,
+            output_type="str",
+            operation_name="filter_via_llm",
+            # pipeline_config=pipeline_config,
+            # request_id=request_id,
+        )
+
+        result = self.execute_generation(generation_request)
+        return result
+    
+
+    
+
+    
+    def analyze_filter_prompt_experiment_overall( self, merged_individual_results, model=None)-> GenerationResult:
+        
+
+
+        user_prompt = prompts.PROMPT_analyze_filter_prompt_experiment_overall.format(
+            merged_individual_results=merged_individual_results,
+        
+        )
+
+         
+        if model is None:
+            model= "o3"
+            
+           
+        generation_request = GenerationRequest(
+            formatted_prompt=user_prompt,
+            model=model,
+            output_type="str",
+            operation_name="filter_via_llm",
+            # pipeline_config=pipeline_config,
+            # request_id=request_id,
+        )
+
+        result = self.execute_generation(generation_request)
+        return result
+    
+
+
+
+
+
+
 
     
     def filter_via_llm(
@@ -89,26 +150,55 @@ Give the output in strict JSON format without HTML TAGS
         corpus: str,
         thing_to_extract,
         model = None,
+        filter_strategy=None
     ) -> GenerationResult:
         
-        formatted_prompt = f"""Here is the text corpus relevant to our task:
-                            {corpus}
-
-                            Here is the information we are interested in:
-                            {thing_to_extract}
-
-                            Task Description:
-                            Your job is to filter all relevant information from the provided corpus according to the criteria above.
-                            The output should be a text corpus containing the filtered piece(s), preserving their original wording.
-                            """
+     
 
        
+        if filter_strategy=="liberal":
+            user_prompt = prompts.PROPMT_filter_via_llm_liberal.format(
+            corpus=corpus,
+            thing_to_extract=thing_to_extract
+   
+            )
+        elif filter_strategy=="inclusive": 
+            user_prompt = prompts.PROPMT_filter_via_llm_INCLUSIVE.format(
+            corpus=corpus,
+            thing_to_extract=thing_to_extract
+   
+            )
+        elif filter_strategy=="contextual":
+
+            user_prompt = prompts.PROPMT_filter_via_llm_contextual.format(
+            corpus=corpus,
+            thing_to_extract=thing_to_extract
+   
+            )
+
+        elif filter_strategy=="recall":
+            user_prompt = prompts.PROPMT_filter_via_llm_recall.format(
+            corpus=corpus,
+            thing_to_extract=thing_to_extract
+   
+            )
+             
+        elif filter_strategy=="base":
+            user_prompt = prompts.PROPMT_filter_via_llm_base.format(
+            corpus=corpus,
+            thing_to_extract=thing_to_extract
+   
+            )
+        
+    
     
         if model is None:
-            model= "gpt-4o-mini"
-
+            #model= "gpt-4o-mini"
+            
+            model=  "gpt-4.1-nano"
+        
         generation_request = GenerationRequest(
-            formatted_prompt=formatted_prompt,
+            formatted_prompt=user_prompt,
             model=model,
             output_type="str",
             operation_name="filter_via_llm",
@@ -120,37 +210,61 @@ Give the output in strict JSON format without HTML TAGS
         return result
     
     
+
+
+
+
+
     async def filter_via_llm_async(
         self,
         corpus: str,
         thing_to_extract,
         model = None,
+        filter_strategy=None
     ) -> GenerationResult:
         
-        formatted_prompt = f"""Here is the text corpus relevant to our task:
-                            {corpus}
+        
+       
+        if filter_strategy=="liberal":
+            user_prompt = prompts.PROPMT_filter_via_llm_liberal.format(
+            corpus=corpus,
+            thing_to_extract=thing_to_extract
+   
+            )
+        elif filter_strategy=="inclusive": 
+            user_prompt = prompts.PROPMT_filter_via_llm_INCLUSIVE.format(
+            corpus=corpus,
+            thing_to_extract=thing_to_extract
+   
+            )
+        elif filter_strategy=="contextual":
 
-                            Here is the information we are interested in:
-                            {thing_to_extract}
+            user_prompt = prompts.PROPMT_filter_via_llm_contextual.format(
+            corpus=corpus,
+            thing_to_extract=thing_to_extract
+   
+            )
 
-                            Task Description:
-                            Your job is to filter all relevant information from the provided corpus according to the criteria above.
-                            The output should be a text corpus containing the filtered piece(s), preserving their original wording.
-                            """
-
-        # pipeline_config = [
-        #     {
-        #         "type": "SemanticIsolation",
-        #         "params": {"semantic_element_for_extraction": "pure category"},
-        #     }
-        # ]
+        elif filter_strategy=="recall":
+            user_prompt = prompts.PROPMT_filter_via_llm_recall.format(
+            corpus=corpus,
+            thing_to_extract=thing_to_extract
+   
+            )
+             
+        else:
+            user_prompt = prompts.PROPMT_filter_via_llm_base.format(
+            corpus=corpus,
+            thing_to_extract=thing_to_extract
+   
+            )
     
-
+         
         if model is None:
             model= "gpt-4o-mini"
 
         generation_request = GenerationRequest(
-            formatted_prompt=formatted_prompt,
+            formatted_prompt=user_prompt,
             model=model,
             output_type="str",
             operation_name="filter_via_llm",
@@ -163,7 +277,7 @@ Give the output in strict JSON format without HTML TAGS
         return result
     
 
-
+    
         # ────────────────────────── async variant ──────────────────────────
     async def parse_via_llm_async(
         self,
@@ -175,27 +289,20 @@ Give the output in strict JSON format without HTML TAGS
         Non-blocking version of parse_via_llm().
         Requires BaseLLMService.execute_generation_async.
         """
-        formatted_prompt = f"""Here is the text corpus relevant to our task:
-            {corpus}
-
-            Here are the keywords to parse:
-            {parse_keywords}
-
-            Task:
-            Convert the corpus into strict JSON with those keys.
-            Do NOT add or remove keys; if information is missing, assign null.
-
-            Return strict JSON only.
-            """
+        user_prompt = prompts.PARSE_VIA_LLM_PROMPT.format(
+            corpus=corpus,
+            parse_keywords=parse_keywords,
+           
+        )
 
         pipeline_config = [
             {"type": "ConvertToDict", "params": {}},
         ]
 
         model = model or "gpt-4o-mini"
-
+        
         gen_request = GenerationRequest(
-            formatted_prompt=formatted_prompt,
+            formatted_prompt=user_prompt,
             model=model,
             output_type="str",
             operation_name="parse_via_llm_async",

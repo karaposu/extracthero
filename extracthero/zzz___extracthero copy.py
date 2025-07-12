@@ -4,9 +4,8 @@
 from __future__ import annotations
 
 from time import time
-from typing import List, Union, Optional, Tuple, Dict
+from typing import List, Union, Optional, Tuple
 import json
-import tiktoken
 
 from extracthero.myllmservice import MyLLMService
 from extracthero.schemes import (
@@ -31,20 +30,6 @@ class ExtractHero:
         self.llm = llm or MyLLMService()
         self.filter_hero = FilterHero(self.config, self.llm)
         self.parse_hero = ParseHero(self.config, self.llm)
-        self.encoding = tiktoken.encoding_for_model("gpt-4o-mini")
-
-    def _count_tokens(self, text: str | dict | None) -> int:
-        """Count tokens in text or dict content."""
-        if text is None:
-            return 0
-        
-        if isinstance(text, dict):
-            text = json.dumps(text)
-        
-        try:
-            return len(self.encoding.encode(str(text)))
-        except Exception:
-            return 0
 
     def extract(
         self,
@@ -56,6 +41,24 @@ class ExtractHero:
     ) -> ExtractOp:
         """
         Three-phase extraction pipeline: HTML Reduction → Filter → Parse.
+
+        Parameters
+        ----------
+        text : str | dict
+            The source content to extract data from
+        extraction_spec : WhatToRetain | List[WhatToRetain]
+            Defines what data to extract and how
+        filter_strategy : str
+            Strategy for filtering ("contextual", "liberal", "inclusive", etc.)
+        reduce_html : bool, default True
+            Apply HTML reduction before filtering (only for HTML content)
+        model_name : Optional[str]
+            Specific model to use for LLM operations
+            
+        Returns
+        -------
+        ExtractOp
+            Rich result object with content, timing, usage, and error details
         """
         extraction_start_time = time()
         
@@ -63,7 +66,6 @@ class ExtractHero:
         reduced_html = None
         html_reduce_op = None
         corpus_to_filter = text
-        stage_tokens = {}
         
         # Phase 0: Optional HTML Reduction
         if reduce_html and isinstance(text, str) and "<" in text and ">" in text:
@@ -72,31 +74,17 @@ class ExtractHero:
                 if html_reduce_op.success:
                     reduced_html = html_reduce_op.reduced_data
                     corpus_to_filter = html_reduce_op.reduced_data
-                    # Use existing token counts from html_reduce_op
-                    stage_tokens["HTML Reduction"] = {
-                        "input": html_reduce_op.total_token,
-                        "output": html_reduce_op.reduced_total_token
-                    }
                 else:
                     corpus_to_filter = text
             except Exception as e:
                 corpus_to_filter = text
         
         # Phase 1: Filtering
-        filter_input_tokens = self._count_tokens(corpus_to_filter)
         filter_op: FilterOp = self.filter_hero.run(
             corpus_to_filter,
             extraction_spec,
             filter_strategy=filter_strategy
         )
-        
-        # Use filtered_data_token_size if available, otherwise calculate
-        filter_output_tokens = filter_op.filtered_data_token_size if filter_op.filtered_data_token_size else self._count_tokens(filter_op.content if filter_op.success else None)
-        
-        stage_tokens["Filter"] = {
-            "input": filter_input_tokens,
-            "output": filter_output_tokens
-        }
 
         # Check if filter phase failed
         if not filter_op.success:
@@ -116,22 +104,15 @@ class ExtractHero:
                 start_time=extraction_start_time,
                 content=None,
                 reduced_html=reduced_html,
-                html_reduce_op=html_reduce_op,
-                stage_tokens=stage_tokens
+                html_reduce_op=html_reduce_op
             )
 
         # Phase 2: Parsing
-        parse_input_tokens = filter_output_tokens  # Use the filter output tokens
         parse_op = self.parse_hero.run(
             filter_op.content, 
             extraction_spec,
             model_name=model_name
         )
-        parse_output_tokens = self._count_tokens(parse_op.content if parse_op.success else None)
-        stage_tokens["Parse"] = {
-            "input": parse_input_tokens,
-            "output": parse_output_tokens
-        }
         
         # Create ExtractOp with all metrics
         result = ExtractOp.from_operations(
@@ -140,8 +121,7 @@ class ExtractHero:
             start_time=extraction_start_time,
             content=parse_op.content if parse_op.success else None,
             reduced_html=reduced_html,
-            html_reduce_op=html_reduce_op,
-            stage_tokens=stage_tokens
+            html_reduce_op=html_reduce_op
         )
         
         return result
@@ -156,6 +136,24 @@ class ExtractHero:
     ) -> ExtractOp:
         """
         Three-phase extraction with filter chaining.
+
+        Parameters
+        ----------
+        text : str | dict
+            The source content to extract data from
+        extraction_spec : WhatToRetain | List[WhatToRetain]
+            Final specifications for parsing
+        filter_stages : List[Tuple[List[WhatToRetain], str]]
+            List of (extraction_spec, filter_strategy) tuples for chaining
+        reduce_html : bool, default True
+            Apply HTML reduction before filtering
+        model_name : Optional[str]
+            Specific model to use
+            
+        Returns
+        -------
+        ExtractOp
+            Rich result object with filter chain details
         """
         extraction_start_time = time()
         
@@ -163,7 +161,6 @@ class ExtractHero:
         reduced_html = None
         html_reduce_op = None
         corpus_to_filter = text
-        stage_tokens = {}
         
         # Phase 0: Optional HTML Reduction
         if reduce_html and isinstance(text, str) and "<" in text and ">" in text:
@@ -172,39 +169,16 @@ class ExtractHero:
                 if html_reduce_op.success:
                     reduced_html = html_reduce_op.reduced_data
                     corpus_to_filter = html_reduce_op.reduced_data
-                    # Use existing token counts from html_reduce_op
-                    stage_tokens["HTML Reduction"] = {
-                        "input": html_reduce_op.total_token,
-                        "output": html_reduce_op.reduced_total_token
-                    }
                 else:
                     corpus_to_filter = text
             except Exception as e:
                 corpus_to_filter = text
         
         # Phase 1: Filter Chain
-        filter_input_tokens = self._count_tokens(corpus_to_filter)
         filter_chain_op: FilterChainOp = self.filter_hero.chain(
             corpus_to_filter,
             filter_stages
         )
-        
-        # Use filtered_data_token_size if available
-        filter_output_tokens = filter_chain_op.filtered_data_token_size if filter_chain_op.filtered_data_token_size else self._count_tokens(filter_chain_op.content if filter_chain_op.success else None)
-        
-        # Track tokens for each filter stage
-        stage_tokens["Filter Chain (Total)"] = {
-            "input": filter_input_tokens,
-            "output": filter_output_tokens
-        }
-        
-        # Add individual filter stage tokens if available (these are already calculated in reduction_details)
-        if filter_chain_op.reduction_details:
-            for i, reduction in enumerate(filter_chain_op.reduction_details):
-                stage_tokens[f"Filter Stage {i+1}"] = {
-                    "input": reduction.get("source_token_size", 0),
-                    "output": reduction.get("filtered_token_size", 0)
-                }
 
         # Check if filter chain failed
         if not filter_chain_op.success:
@@ -224,22 +198,15 @@ class ExtractHero:
                 start_time=extraction_start_time,
                 content=None,
                 reduced_html=reduced_html,
-                html_reduce_op=html_reduce_op,
-                stage_tokens=stage_tokens
+                html_reduce_op=html_reduce_op
             )
 
         # Phase 2: Parsing
-        parse_input_tokens = filter_output_tokens  # Use the filter chain output tokens
         parse_op = self.parse_hero.run(
             filter_chain_op.content, 
             extraction_spec,
             model_name=model_name
         )
-        parse_output_tokens = self._count_tokens(parse_op.content if parse_op.success else None)
-        stage_tokens["Parse"] = {
-            "input": parse_input_tokens,
-            "output": parse_output_tokens
-        }
         
         # Create ExtractOp with chain results
         result = ExtractOp.from_operations(
@@ -248,8 +215,7 @@ class ExtractHero:
             start_time=extraction_start_time,
             content=parse_op.content if parse_op.success else None,
             reduced_html=reduced_html,
-            html_reduce_op=html_reduce_op,
-            stage_tokens=stage_tokens
+            html_reduce_op=html_reduce_op
         )
         
         return result
@@ -264,6 +230,24 @@ class ExtractHero:
     ) -> ExtractOp:
         """
         Async three-phase extraction pipeline.
+        
+        Parameters
+        ----------
+        text : str | dict
+            The source content to extract data from
+        extraction_spec : WhatToRetain | List[WhatToRetain]
+            Defines what data to extract and how
+        filter_strategy : str
+            Strategy for filtering ("contextual", "liberal", "inclusive", etc.)
+        reduce_html : bool, default True
+            Apply HTML reduction before filtering (only for HTML content)
+        model_name : Optional[str]
+            Specific model to use for LLM operations
+            
+        Returns
+        -------
+        ExtractOp
+            Rich result object with content, timing, usage, and error details
         """
         extraction_start_time = time()
         
@@ -271,7 +255,6 @@ class ExtractHero:
         reduced_html = None
         html_reduce_op = None
         corpus_to_filter = text
-        stage_tokens = {}
         
         # Phase 0: Optional HTML Reduction
         if reduce_html and isinstance(text, str) and "<" in text and ">" in text:
@@ -280,30 +263,17 @@ class ExtractHero:
                 if html_reduce_op.success:
                     reduced_html = html_reduce_op.reduced_data
                     corpus_to_filter = html_reduce_op.reduced_data
-                    # Use existing token counts
-                    stage_tokens["HTML Reduction"] = {
-                        "input": html_reduce_op.total_token,
-                        "output": html_reduce_op.reduced_total_token
-                    }
                 else:
                     corpus_to_filter = text
             except Exception as e:
                 corpus_to_filter = text
         
         # Phase 1: Async Filtering
-        filter_input_tokens = self._count_tokens(corpus_to_filter)
         filter_op: FilterOp = await self.filter_hero.run_async(
             corpus_to_filter,
             extraction_spec,
             filter_strategy=filter_strategy
         )
-        
-        filter_output_tokens = filter_op.filtered_data_token_size if filter_op.filtered_data_token_size else self._count_tokens(filter_op.content if filter_op.success else None)
-        
-        stage_tokens["Filter"] = {
-            "input": filter_input_tokens,
-            "output": filter_output_tokens
-        }
 
         if not filter_op.success:
             parse_op = ParseOp.from_result(
@@ -322,22 +292,15 @@ class ExtractHero:
                 start_time=extraction_start_time,
                 content=None,
                 reduced_html=reduced_html,
-                html_reduce_op=html_reduce_op,
-                stage_tokens=stage_tokens
+                html_reduce_op=html_reduce_op
             )
 
         # Phase 2: Async Parsing
-        parse_input_tokens = filter_output_tokens
         parse_op = await self.parse_hero.run_async(
             filter_op.content, 
             extraction_spec,
             model_name=model_name
         )
-        parse_output_tokens = self._count_tokens(parse_op.content if parse_op.success else None)
-        stage_tokens["Parse"] = {
-            "input": parse_input_tokens,
-            "output": parse_output_tokens
-        }
         
         result = ExtractOp.from_operations(
             filter_op=filter_op,
@@ -345,8 +308,7 @@ class ExtractHero:
             start_time=extraction_start_time,
             content=parse_op.content if parse_op.success else None,
             reduced_html=reduced_html,
-            html_reduce_op=html_reduce_op,
-            stage_tokens=stage_tokens
+            html_reduce_op=html_reduce_op
         )
         
         return result
@@ -361,6 +323,24 @@ class ExtractHero:
     ) -> ExtractOp:
         """
         Async three-phase extraction with filter chaining.
+        
+        Parameters
+        ----------
+        text : str | dict
+            The source content to extract data from
+        extraction_spec : WhatToRetain | List[WhatToRetain]
+            Final specifications for parsing
+        filter_stages : List[Tuple[List[WhatToRetain], str]]
+            List of (extraction_spec, filter_strategy) tuples for chaining
+        reduce_html : bool, default True
+            Apply HTML reduction before filtering
+        model_name : Optional[str]
+            Specific model to use
+            
+        Returns
+        -------
+        ExtractOp
+            Rich result object with filter chain details
         """
         extraction_start_time = time()
         
@@ -368,7 +348,6 @@ class ExtractHero:
         reduced_html = None
         html_reduce_op = None
         corpus_to_filter = text
-        stage_tokens = {}
         
         # Phase 0: Optional HTML Reduction
         if reduce_html and isinstance(text, str) and "<" in text and ">" in text:
@@ -377,38 +356,16 @@ class ExtractHero:
                 if html_reduce_op.success:
                     reduced_html = html_reduce_op.reduced_data
                     corpus_to_filter = html_reduce_op.reduced_data
-                    # Use existing token counts
-                    stage_tokens["HTML Reduction"] = {
-                        "input": html_reduce_op.total_token,
-                        "output": html_reduce_op.reduced_total_token
-                    }
                 else:
                     corpus_to_filter = text
             except Exception as e:
                 corpus_to_filter = text
         
         # Phase 1: Async Filter Chain
-        filter_input_tokens = self._count_tokens(corpus_to_filter)
         filter_chain_op: FilterChainOp = await self.filter_hero.chain_async(
             corpus_to_filter,
             filter_stages
         )
-        
-        filter_output_tokens = filter_chain_op.filtered_data_token_size if filter_chain_op.filtered_data_token_size else self._count_tokens(filter_chain_op.content if filter_chain_op.success else None)
-        
-        # Track tokens for each filter stage
-        stage_tokens["Filter Chain (Total)"] = {
-            "input": filter_input_tokens,
-            "output": filter_output_tokens
-        }
-        
-        # Add individual filter stage tokens
-        if filter_chain_op.reduction_details:
-            for i, reduction in enumerate(filter_chain_op.reduction_details):
-                stage_tokens[f"Filter Stage {i+1}"] = {
-                    "input": reduction.get("source_token_size", 0),
-                    "output": reduction.get("filtered_token_size", 0)
-                }
 
         if not filter_chain_op.success:
             parse_op = ParseOp.from_result(
@@ -427,22 +384,15 @@ class ExtractHero:
                 start_time=extraction_start_time,
                 content=None,
                 reduced_html=reduced_html,
-                html_reduce_op=html_reduce_op,
-                stage_tokens=stage_tokens
+                html_reduce_op=html_reduce_op
             )
 
         # Phase 2: Async Parsing
-        parse_input_tokens = filter_output_tokens
         parse_op = await self.parse_hero.run_async(
             filter_chain_op.content, 
             extraction_spec,
             model_name=model_name
         )
-        parse_output_tokens = self._count_tokens(parse_op.content if parse_op.success else None)
-        stage_tokens["Parse"] = {
-            "input": parse_input_tokens,
-            "output": parse_output_tokens
-        }
         
         result = ExtractOp.from_operations(
             filter_chain_op=filter_chain_op,
@@ -450,8 +400,7 @@ class ExtractHero:
             start_time=extraction_start_time,
             content=parse_op.content if parse_op.success else None,
             reduced_html=reduced_html,
-            html_reduce_op=html_reduce_op,
-            stage_tokens=stage_tokens
+            html_reduce_op=html_reduce_op
         )
         
         return result
@@ -462,25 +411,105 @@ def main() -> None:
     """Demo showing different extraction methods."""
     extractor = ExtractHero()
     
+    # # Define what to extract
+    # specs = [
+    #     WhatToRetain(
+    #         name="title",
+    #         desc="Product title",
+    #         example="Wireless Keyboard"
+    #     ),
+    #     WhatToRetain(
+    #         name="price",
+    #         desc="Product price with currency symbol",
+    #         example="€49.99"
+    #     ),
+    # ]
+    
+    # sample_html = """
+    # <html><body>
+    #   <div class="product">
+    #     <h2 class="title">Wireless Keyboard</h2>
+    #     <span class="price">€49.99</span>
+    #     <p class="description">Premium wireless keyboard with backlight</p>
+    #   </div>
+    #   <div class="product">
+    #     <h2 class="title">USB-C Hub</h2>
+    #     <span class="price">€29.50</span>
+    #     <p class="description">7-in-1 USB-C hub</p>
+    #   </div>
+    # </body></html>
+    # """
+    
+    # print("🚀 ExtractHero Demo - Three Phase Extraction")
+    # print("=" * 60)
+    
+    # # Example 1: Simple extraction
+    # print("\n📋 Example 1: Simple extraction with HTML reduction")
+    # op = extractor.extract(
+    #     sample_html, 
+    #     items, 
+    #     filter_strategy="contextual",
+    #     reduce_html=True
+    # )
+    
+    # if op.success:
+    #     print(f"✅ Success! Extracted: {op.content}")
+    #     print(f"   Total time: {op.elapsed_time:.3f}s")
+    #     if op.usage:
+    #         print(f"   Total cost: ${op.usage.get('total_cost', 0):.4f}")
+    # else:
+    #     print(f"❌ Failed: {op.error}")
+    
+    # # Example 2: Filter chain extraction
+    # print("\n📋 Example 2: Extraction with filter chain")
+    # filter_stages = [
+    #     ([WhatToRetain(name="products", desc="all product information")], "liberal"),
+    #     ([WhatToRetain(name="main_product", desc="main product only")], "contextual"),
+    # ]
+    
+    # op = extractor.extract_with_chain(
+    #     sample_html,
+    #     items,  # Final parsing spec
+    #     filter_stages=filter_stages,
+    #     reduce_html=True
+    # )
+    
+    # if op.success:
+    #     print(f"✅ Success! Extracted: {op.content}")
+    #     print(f"   Filter stages: {len(op.filter_chain_op.stages_config)}")
+    #     print(f"   Total time: {op.elapsed_time:.3f}s")
+    #     if op.usage:
+    #         print(f"   Total cost: ${op.usage.get('total_cost', 0):.4f}")
+    # else:
+    #     print(f"❌ Failed: {op.error}")
+
+
+
     specs = [
+        # WhatToRetain(
+        #     name="voltage",
+        #     desc="all information regarding voltage attribute",
+           
+        # ),
         WhatToRetain(
             name="reverse_voltage_value",
             desc="reverse voltage value in units of V",
+        
         ),
     ]
     
-    # Example: Load real HTML file
-    print("\n📋 Real HTML file extraction with token tracking")
+    # Example 3: Load real HTML file
+    print("\n📋 Example 3: Real HTML file extraction")
     try:
+
         html_doc = load_html("extracthero/real_life_samples/1/nexperia-aa4afebbd10348ec91358f07facf06f1.html")
         extract_op = extractor.extract(html_doc, specs, reduce_html=True)
         
         if extract_op.success:
             print(f"✅ Success! Extracted: {extract_op.content}")
-            print(f"\n{extract_op.token_summary}")
-            print(f"\nTotal time: {extract_op.elapsed_time:.3f}s")
+            print(f"   Filtered corpus length: {len(extract_op.filter_content)} chars")
             if extract_op.usage:
-                print(f"Total cost: ${extract_op.usage.get('total_cost', 0):.4f}")
+                print(f"   Total cost: ${extract_op.usage.get('total_cost', 0):.4f}")
         else:
             print(f"❌ Failed: {extract_op.error}")
     except Exception as e:

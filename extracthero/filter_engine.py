@@ -80,7 +80,7 @@ class FilterEngine:
             )
         
 
-        return gen_results.content, gen_results.usage, gen_results
+        return gen_results
         
        
     

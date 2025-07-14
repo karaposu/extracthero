@@ -381,6 +381,9 @@ class ExtractOp:
 
     stage_tokens: Optional[Dict[str, Dict[str, int]]] = None
 
+
+    trimmed_to: Optional[int] = None  # Number of chars if trimming was applied
+
     @property
     def success(self) -> bool:
         """Success if both filter and parse succeeded."""
@@ -411,7 +414,8 @@ class ExtractOp:
         content: Optional[Any] = None,
         reduced_html: Optional[str] = None,
         html_reduce_op: Optional[Any] = None,
-        stage_tokens: Optional[Dict[str, Dict[str, int]]] = None
+        stage_tokens: Optional[Dict[str, Dict[str, int]]] = None,
+        trimmed_to: Optional[int] = None
     ) -> "ExtractOp":
         """
         Create ExtractOp with calculated metrics from filter and parse operations.
@@ -450,7 +454,8 @@ class ExtractOp:
             start_time=start_time,
             reduced_html=reduced_html,
             html_reduce_op=html_reduce_op,
-            stage_tokens=stage_tokens
+            stage_tokens=stage_tokens,
+            trimmed_to=trimmed_to
         )
         
         # Calculate and set combined usage
@@ -458,6 +463,8 @@ class ExtractOp:
         
         # Determine and set first error
         instance._get_first_error()
+
+        
         
         return instance
     

@@ -46,6 +46,17 @@ class ExtractHero:
         except Exception:
             return 0
 
+    def _trim_if_needed(self, text: str, trim_char_length: Optional[int]) -> Tuple[str, Optional[int]]:
+        """
+        Trim text to specified character length if needed.
+        
+        Returns:
+            Tuple of (trimmed_text, trimmed_to_chars or None)
+        """
+        if trim_char_length and len(text) > trim_char_length:
+            return text[:trim_char_length], trim_char_length
+        return text, None
+
     def extract(
         self,
         text: str | dict,
@@ -53,9 +64,30 @@ class ExtractHero:
         filter_strategy: str = "contextual",
         reduce_html: bool = True,
         model_name: Optional[str] = None,
+        trim_char_length: Optional[int] = None,
     ) -> ExtractOp:
         """
-        Three-phase extraction pipeline: HTML Reduction → Filter → Parse.
+        Three-phase extraction pipeline: HTML Reduction → Trimming → Filter → Parse.
+
+        Parameters
+        ----------
+        text : str | dict
+            The source content to extract data from
+        extraction_spec : WhatToRetain | List[WhatToRetain]
+            Defines what data to extract and how
+        filter_strategy : str
+            Strategy for filtering ("contextual", "liberal", "inclusive", etc.)
+        reduce_html : bool, default True
+            Apply HTML reduction before filtering (only for HTML content)
+        model_name : Optional[str]
+            Specific model to use for LLM operations
+        trim_char_length : Optional[int]
+            Maximum character length to trim to after HTML reduction. None means no trimming.
+            
+        Returns
+        -------
+        ExtractOp
+            Rich result object with content, timing, usage, and error details
         """
         extraction_start_time = time()
         
@@ -64,6 +96,7 @@ class ExtractHero:
         html_reduce_op = None
         corpus_to_filter = text
         stage_tokens = {}
+        trimmed_to = None
         
         # Phase 0: Optional HTML Reduction
         if reduce_html and isinstance(text, str) and "<" in text and ">" in text:
@@ -81,6 +114,19 @@ class ExtractHero:
                     corpus_to_filter = text
             except Exception as e:
                 corpus_to_filter = text
+        
+        # Phase 0.5: Trimming if needed (after HTML reduction)
+        if trim_char_length and isinstance(corpus_to_filter, str):
+            corpus_to_filter, trimmed_to = self._trim_if_needed(corpus_to_filter, trim_char_length)
+            if trimmed_to:
+                # Add trimming info to stage tokens
+                trimmed_tokens = self._count_tokens(corpus_to_filter)
+                pre_trim_tokens = stage_tokens.get("HTML Reduction", {}).get("output", self._count_tokens(text))
+                stage_tokens["Trimming"] = {
+                    "input": pre_trim_tokens,
+                    "output": trimmed_tokens,
+                    "trimmed_to_chars": trimmed_to
+                }
         
         # Phase 1: Filtering
         filter_input_tokens = self._count_tokens(corpus_to_filter)
@@ -117,7 +163,8 @@ class ExtractHero:
                 content=None,
                 reduced_html=reduced_html,
                 html_reduce_op=html_reduce_op,
-                stage_tokens=stage_tokens
+                stage_tokens=stage_tokens,
+                trimmed_to=trimmed_to
             )
 
         # Phase 2: Parsing
@@ -141,7 +188,8 @@ class ExtractHero:
             content=parse_op.content if parse_op.success else None,
             reduced_html=reduced_html,
             html_reduce_op=html_reduce_op,
-            stage_tokens=stage_tokens
+            stage_tokens=stage_tokens,
+            trimmed_to=trimmed_to
         )
         
         return result
@@ -153,9 +201,30 @@ class ExtractHero:
         filter_stages: List[Tuple[List[WhatToRetain], str]],
         reduce_html: bool = True,
         model_name: Optional[str] = None,
+        trim_char_length: Optional[int] = None,
     ) -> ExtractOp:
         """
         Three-phase extraction with filter chaining.
+
+        Parameters
+        ----------
+        text : str | dict
+            The source content to extract data from
+        extraction_spec : WhatToRetain | List[WhatToRetain]
+            Final specifications for parsing
+        filter_stages : List[Tuple[List[WhatToRetain], str]]
+            List of (extraction_spec, filter_strategy) tuples for chaining
+        reduce_html : bool, default True
+            Apply HTML reduction before filtering
+        model_name : Optional[str]
+            Specific model to use
+        trim_char_length : Optional[int]
+            Maximum character length to trim to after HTML reduction. None means no trimming.
+            
+        Returns
+        -------
+        ExtractOp
+            Rich result object with filter chain details
         """
         extraction_start_time = time()
         
@@ -164,6 +233,7 @@ class ExtractHero:
         html_reduce_op = None
         corpus_to_filter = text
         stage_tokens = {}
+        trimmed_to = None
         
         # Phase 0: Optional HTML Reduction
         if reduce_html and isinstance(text, str) and "<" in text and ">" in text:
@@ -181,6 +251,19 @@ class ExtractHero:
                     corpus_to_filter = text
             except Exception as e:
                 corpus_to_filter = text
+        
+        # Phase 0.5: Trimming if needed (after HTML reduction)
+        if trim_char_length and isinstance(corpus_to_filter, str):
+            corpus_to_filter, trimmed_to = self._trim_if_needed(corpus_to_filter, trim_char_length)
+            if trimmed_to:
+                # Add trimming info to stage tokens
+                trimmed_tokens = self._count_tokens(corpus_to_filter)
+                pre_trim_tokens = stage_tokens.get("HTML Reduction", {}).get("output", self._count_tokens(text))
+                stage_tokens["Trimming"] = {
+                    "input": pre_trim_tokens,
+                    "output": trimmed_tokens,
+                    "trimmed_to_chars": trimmed_to
+                }
         
         # Phase 1: Filter Chain
         filter_input_tokens = self._count_tokens(corpus_to_filter)
@@ -225,7 +308,8 @@ class ExtractHero:
                 content=None,
                 reduced_html=reduced_html,
                 html_reduce_op=html_reduce_op,
-                stage_tokens=stage_tokens
+                stage_tokens=stage_tokens,
+                trimmed_to=trimmed_to
             )
 
         # Phase 2: Parsing
@@ -249,7 +333,8 @@ class ExtractHero:
             content=parse_op.content if parse_op.success else None,
             reduced_html=reduced_html,
             html_reduce_op=html_reduce_op,
-            stage_tokens=stage_tokens
+            stage_tokens=stage_tokens,
+            trimmed_to=trimmed_to
         )
         
         return result
@@ -261,9 +346,30 @@ class ExtractHero:
         filter_strategy: str = "contextual",
         reduce_html: bool = True,
         model_name: Optional[str] = None,
+        trim_char_length: Optional[int] = None,
     ) -> ExtractOp:
         """
         Async three-phase extraction pipeline.
+        
+        Parameters
+        ----------
+        text : str | dict
+            The source content to extract data from
+        extraction_spec : WhatToRetain | List[WhatToRetain]
+            Defines what data to extract and how
+        filter_strategy : str
+            Strategy for filtering ("contextual", "liberal", "inclusive", etc.)
+        reduce_html : bool, default True
+            Apply HTML reduction before filtering (only for HTML content)
+        model_name : Optional[str]
+            Specific model to use for LLM operations
+        trim_char_length : Optional[int]
+            Maximum character length to trim to after HTML reduction. None means no trimming.
+            
+        Returns
+        -------
+        ExtractOp
+            Rich result object with content, timing, usage, and error details
         """
         extraction_start_time = time()
         
@@ -272,6 +378,7 @@ class ExtractHero:
         html_reduce_op = None
         corpus_to_filter = text
         stage_tokens = {}
+        trimmed_to = None
         
         # Phase 0: Optional HTML Reduction
         if reduce_html and isinstance(text, str) and "<" in text and ">" in text:
@@ -289,6 +396,19 @@ class ExtractHero:
                     corpus_to_filter = text
             except Exception as e:
                 corpus_to_filter = text
+        
+        # Phase 0.5: Trimming if needed (after HTML reduction)
+        if trim_char_length and isinstance(corpus_to_filter, str):
+            corpus_to_filter, trimmed_to = self._trim_if_needed(corpus_to_filter, trim_char_length)
+            if trimmed_to:
+                # Add trimming info to stage tokens
+                trimmed_tokens = self._count_tokens(corpus_to_filter)
+                pre_trim_tokens = stage_tokens.get("HTML Reduction", {}).get("output", self._count_tokens(text))
+                stage_tokens["Trimming"] = {
+                    "input": pre_trim_tokens,
+                    "output": trimmed_tokens,
+                    "trimmed_to_chars": trimmed_to
+                }
         
         # Phase 1: Async Filtering
         filter_input_tokens = self._count_tokens(corpus_to_filter)
@@ -323,7 +443,8 @@ class ExtractHero:
                 content=None,
                 reduced_html=reduced_html,
                 html_reduce_op=html_reduce_op,
-                stage_tokens=stage_tokens
+                stage_tokens=stage_tokens,
+                trimmed_to=trimmed_to
             )
 
         # Phase 2: Async Parsing
@@ -346,7 +467,8 @@ class ExtractHero:
             content=parse_op.content if parse_op.success else None,
             reduced_html=reduced_html,
             html_reduce_op=html_reduce_op,
-            stage_tokens=stage_tokens
+            stage_tokens=stage_tokens,
+            trimmed_to=trimmed_to
         )
         
         return result
@@ -358,9 +480,30 @@ class ExtractHero:
         filter_stages: List[Tuple[List[WhatToRetain], str]],
         reduce_html: bool = True,
         model_name: Optional[str] = None,
+        trim_char_length: Optional[int] = None,
     ) -> ExtractOp:
         """
         Async three-phase extraction with filter chaining.
+        
+        Parameters
+        ----------
+        text : str | dict
+            The source content to extract data from
+        extraction_spec : WhatToRetain | List[WhatToRetain]
+            Final specifications for parsing
+        filter_stages : List[Tuple[List[WhatToRetain], str]]
+            List of (extraction_spec, filter_strategy) tuples for chaining
+        reduce_html : bool, default True
+            Apply HTML reduction before filtering
+        model_name : Optional[str]
+            Specific model to use
+        trim_char_length : Optional[int]
+            Maximum character length to trim to after HTML reduction. None means no trimming.
+            
+        Returns
+        -------
+        ExtractOp
+            Rich result object with filter chain details
         """
         extraction_start_time = time()
         
@@ -369,6 +512,7 @@ class ExtractHero:
         html_reduce_op = None
         corpus_to_filter = text
         stage_tokens = {}
+        trimmed_to = None
         
         # Phase 0: Optional HTML Reduction
         if reduce_html and isinstance(text, str) and "<" in text and ">" in text:
@@ -386,6 +530,19 @@ class ExtractHero:
                     corpus_to_filter = text
             except Exception as e:
                 corpus_to_filter = text
+        
+        # Phase 0.5: Trimming if needed (after HTML reduction)
+        if trim_char_length and isinstance(corpus_to_filter, str):
+            corpus_to_filter, trimmed_to = self._trim_if_needed(corpus_to_filter, trim_char_length)
+            if trimmed_to:
+                # Add trimming info to stage tokens
+                trimmed_tokens = self._count_tokens(corpus_to_filter)
+                pre_trim_tokens = stage_tokens.get("HTML Reduction", {}).get("output", self._count_tokens(text))
+                stage_tokens["Trimming"] = {
+                    "input": pre_trim_tokens,
+                    "output": trimmed_tokens,
+                    "trimmed_to_chars": trimmed_to
+                }
         
         # Phase 1: Async Filter Chain
         filter_input_tokens = self._count_tokens(corpus_to_filter)
@@ -428,7 +585,8 @@ class ExtractHero:
                 content=None,
                 reduced_html=reduced_html,
                 html_reduce_op=html_reduce_op,
-                stage_tokens=stage_tokens
+                stage_tokens=stage_tokens,
+                trimmed_to=trimmed_to
             )
 
         # Phase 2: Async Parsing
@@ -451,7 +609,8 @@ class ExtractHero:
             content=parse_op.content if parse_op.success else None,
             reduced_html=reduced_html,
             html_reduce_op=html_reduce_op,
-            stage_tokens=stage_tokens
+            stage_tokens=stage_tokens,
+            trimmed_to=trimmed_to
         )
         
         return result
@@ -473,10 +632,20 @@ def main() -> None:
     print("\n📋 Real HTML file extraction with token tracking")
     try:
         html_doc = load_html("extracthero/real_life_samples/1/nexperia-aa4afebbd10348ec91358f07facf06f1.html")
-        extract_op = extractor.extract(html_doc, specs, reduce_html=True)
+        
+        # Example with trimming
+        extract_op = extractor.extract(
+            html_doc, 
+            specs, 
+            reduce_html=True,
+            # trim_char_length=50000  # Trim to 50,000 chars
+            trim_char_length=None 
+        )
         
         if extract_op.success:
             print(f"✅ Success! Extracted: {extract_op.content}")
+            if extract_op.trimmed_to:
+                print(f"⚠️  Input was trimmed to {extract_op.trimmed_to:,} characters")
             print(f"\n{extract_op.token_summary}")
             print(f"\nTotal time: {extract_op.elapsed_time:.3f}s")
             if extract_op.usage:

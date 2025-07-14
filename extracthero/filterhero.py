@@ -72,6 +72,7 @@ class FilterHero:
         """
         ts = time()
         content=None
+        filtered_data_token_size = None  
 
         gen_result = self.engine.execute_filtering(
             text, 
@@ -113,6 +114,7 @@ class FilterHero:
         """Async end-to-end filter phase."""
         ts = time()
         content = None
+        filtered_data_token_size = None  # Initialize it here
         
         # This would need FilterEngine.execute_filtering_async() to be implemented
         gen_result = await self.engine.execute_filtering_async(

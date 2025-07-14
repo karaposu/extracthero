@@ -2,3 +2,4 @@ python-dotenv
 llmservice
 domreducer
 string2dict
+tiktoken

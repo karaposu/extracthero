@@ -5,7 +5,7 @@
 import json
 import time
 from datetime import datetime
-from extracthero.schemes import WhatToRetain
+from extracthero.schemas import WhatToRetain
 from extracthero.utils import load_html
 from extracthero.filterhero import FilterHero
 

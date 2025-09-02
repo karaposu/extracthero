@@ -17,7 +17,7 @@ from typing import Any, Dict, List, Optional, Tuple, Union
 
 from llmservice import GenerationResult
 from extracthero.myllmservice import MyLLMService
-from extracthero.schemes import (
+from extracthero.schemas import (
     ExtractConfig,
     FilterOp,
     CorpusPayload,   

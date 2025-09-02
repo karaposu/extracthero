@@ -14,7 +14,7 @@ from time import time
 from typing import Any, Dict, List, Optional, Union
 
 from extracthero.myllmservice import MyLLMService
-from extracthero.schemes import ExtractConfig, ParseOp, WhatToRetain
+from extracthero.schemas import ExtractConfig, ParseOp, WhatToRetain
 from extracthero.parse_engine import ParseEngine
 
 import warnings
@@ -214,23 +214,20 @@ def example_usage():
     print(f"Success: {result.success}")
     print(f"Content: {result.content}")
     
-    # Example 5: Custom model
-    print("\n📝 Example 5: Custom Model (gpt-4)")
-    result = hero.run(filtered_text, items, model_name="gpt-4")
-    print(f"Success: {result.success}")
-    print(f"Model: {result.generation_result.model if result.generation_result else 'None'}")
+   
     
-    # Example 6: Real HTML file (if exists)
-    print("\n📝 Example 6: Real HTML File")
+    # Example 5: Real HTML file (if exists)
+    print("\n📝 Example 5: Real HTML File")
     try:
-        html_doc = load_html("extracthero/real_life_samples/1/reduced_html.txt")
+        html_doc = load_html("extracthero/real_life_samples/1/nexperia-aa4afebbd10348ec91358f07facf06f1.html")
+        print(len(html_doc))
         voltage_spec = WhatToRetain(
             name="voltage", 
             desc="voltage specifications",
             example="5V, 3.3V"
         )
         
-        result = hero.run(html_doc[:500], voltage_spec)  # Using first 500 chars
+        result = hero.run(html_doc[5000], voltage_spec)  # Using first 500 chars
         print(f"Success: {result.success}")
         print(f"Content: {result.content}")
     except Exception as e:

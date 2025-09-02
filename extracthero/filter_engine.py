@@ -14,7 +14,7 @@ import asyncio
 
 from llmservice import GenerationResult
 from extracthero.myllmservice import MyLLMService
-from extracthero.schemes import WhatToRetain
+from extracthero.schemas import WhatToRetain
 from extracthero.utils import load_html
 
 
@@ -55,7 +55,7 @@ class FilterEngine:
         return gen_results
         #return gen_results.content, gen_results.usage, gen_results
     
-
+    
     async def execute_filtering_async(
         self,
         corpus: str,
@@ -100,15 +100,19 @@ if __name__ == "__main__":
     ]
     
     html_doc = load_html("extracthero/real_life_samples/1/nexperia-aa4afebbd10348ec91358f07facf06f1.html")
-    dummy_sample="this is a random text. My name is Enes"
+    dummy_sample="""
+    New york is too hot
+     
+    My name is Enes"""
 
-    content, usage, gen_results=filter_engine.execute_filtering(dummy_sample,
+    gen_results=filter_engine.execute_filtering(dummy_sample,
                                     extraction_spec=specs, 
                                     strategy="liberal", 
                                     model_name="gpt-4o-mini" )
     
+   
 
-    print(content)
+    print(gen_results.content)
     
     
     

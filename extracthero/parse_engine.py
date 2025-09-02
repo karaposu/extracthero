@@ -5,7 +5,7 @@
 from typing import Any, Dict, List, Optional, Union
 from llmservice.generation_engine import GenerationResult
 from extracthero.myllmservice import MyLLMService
-from extracthero.schemes import WhatToRetain
+from extracthero.schemas import WhatToRetain
 
 
 class ParseEngine:

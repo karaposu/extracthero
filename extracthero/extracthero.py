@@ -9,7 +9,7 @@ import json
 import tiktoken
 
 from extracthero.myllmservice import MyLLMService
-from extracthero.schemes import (
+from extracthero.schemas import (
     ExtractConfig,
     ExtractOp,
     FilterOp,

@@ -23,7 +23,7 @@ class MyLLMService(BaseLLMService):
             max_concurrent_requests=max_concurrent_requests,
         )
        
-    # def filter, parse
+    
 
 
    
@@ -61,7 +61,8 @@ class MyLLMService(BaseLLMService):
            
         
         generation_request = GenerationRequest(
-            formatted_prompt=user_prompt,
+            user_prompt=user_prompt,
+           # formatted_prompt=user_prompt,
             model=model,
             output_type="str",
             operation_name="parse_via_llm",
@@ -96,7 +97,8 @@ class MyLLMService(BaseLLMService):
            
         
         generation_request = GenerationRequest(
-            formatted_prompt=user_prompt,
+            user_prompt=user_prompt,
+           # formatted_prompt=user_prompt,
             model=model,
             output_type="str",
             operation_name="filter_via_llm",
@@ -124,9 +126,10 @@ class MyLLMService(BaseLLMService):
         if model is None:
             model= "o3"
             
-           
+        
         generation_request = GenerationRequest(
-            formatted_prompt=user_prompt,
+            user_prompt=user_prompt,
+           # formatted_prompt=user_prompt,
             model=model,
             output_type="str",
             operation_name="filter_via_llm",
@@ -198,7 +201,8 @@ class MyLLMService(BaseLLMService):
             model=  "gpt-4.1-nano"
         
         generation_request = GenerationRequest(
-            formatted_prompt=user_prompt,
+            # formatted_prompt=user_prompt,
+            user_prompt=user_prompt,
             model=model,
             output_type="str",
             operation_name="filter_via_llm",
@@ -264,7 +268,8 @@ class MyLLMService(BaseLLMService):
             model= "gpt-4o-mini"
 
         generation_request = GenerationRequest(
-            formatted_prompt=user_prompt,
+            # formatted_prompt=user_prompt,
+            user_prompt=user_prompt,
             model=model,
             output_type="str",
             operation_name="filter_via_llm",
@@ -302,16 +307,17 @@ class MyLLMService(BaseLLMService):
         model = model or "gpt-4o-mini"
         
         gen_request = GenerationRequest(
-            formatted_prompt=user_prompt,
+            # formatted_prompt=user_prompt,
+            user_prompt=user_prompt,
             model=model,
             output_type="str",
             operation_name="parse_via_llm_async",
             pipeline_config=pipeline_config,
         )
-
+    
         # BaseLLMService supplies execute_generation_async()
         return await self.execute_generation_async(gen_request)
-
+    
     
 
 
@@ -321,7 +327,7 @@ class MyLLMService(BaseLLMService):
         BaseLLMService.execute_generation_async so it can be awaited
         from an asyncio event-loop (e.g. your phase-3 pipeline).
         """
-        formatted_prompt = """Here is list of classes: Food & Dining
+        user_prompt = """Here is list of classes: Food & Dining
                                                         Utilities
                                                         Accommodation
                                                         Incoming P2P Transfer
@@ -363,7 +369,8 @@ class MyLLMService(BaseLLMService):
         ]
 
         generation_request = GenerationRequest(
-            formatted_prompt=formatted_prompt,
+            # formatted_prompt=formatted_prompt,
+              user_prompt=user_prompt,
             model="gpt-4o-mini",
             output_type="str",
             operation_name="categorize_simple_async",

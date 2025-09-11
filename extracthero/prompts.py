@@ -1,6 +1,31 @@
 
 
-PARSE_VIA_LLM_PROMPT="""
+
+
+PARSE_2_MARKDOWN_VIA_LLM_PROMPT="""
+
+
+Here is the text corpus relevant to our task:
+{corpus}
+
+Here is explicit keywords which should be used for parsing:
+{parse_keywords}
+
+Task Description:
+Your job is to parse the text into a markdown format and using given explicit keywords for title names and subtitle names. 
+Do NOT add or remove or normalize information. Your job is parsing in a readable understandable format. 
+IF there is no information regarding any explicit keywords into corpus, you must put it's value as None 
+
+If corpus includes multiple isolated keyword related content, output a list of markdown with given keyword. 
+ALSO do not add any extra keys or layers other than given explicit_dict_keywords
+
+Give the output in strict Markdown format without HTML TAGS
+
+"""
+
+
+
+PARSE_2_JSON_VIA_LLM_PROMPT="""
 
 
 Here is the text corpus relevant to our task:

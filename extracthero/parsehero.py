@@ -43,6 +43,7 @@ class ParseHero:
         items: WhatToRetain | List[WhatToRetain],
         enforce_llm_based_parse: bool = False,
         model_name: Optional[str] = None,
+        content_output_format="json"
     ) -> ParseOp:
         """
         Parse the corpus into structured data using the WhatToRetain specifications.
@@ -70,7 +71,8 @@ class ParseHero:
             corpus=corpus,
             items=items,
             enforce_llm_based_parse=enforce_llm_based_parse,
-            model_name=model_name
+            model_name=model_name,
+            content_output_format=content_output_format
         )
 
         # Build ParseOp result
@@ -133,6 +135,56 @@ class ParseHero:
 
 
 # ────────────────────────── Usage Examples ───────────────────────────────
+
+
+
+
+def example_usage2():
+    """Examples of using ParseHero."""
+    
+    
+    
+    hero = ParseHero()
+    
+    # Define what to extract
+    items = [
+        WhatToRetain(
+            name="title", 
+            desc="Product title",
+            example="Wireless Keyboard Pro"
+        ),
+        WhatToRetain(
+            name="price", 
+            desc="Product price with currency",
+            example="€49.99"
+        ),
+        WhatToRetain(
+            name="rating", 
+            desc="Product rating",
+            example="4.5"
+        ),
+    ]
+    
+    print("🦸 ParseHero Examples")
+    print("=" * 50)
+    
+    # Example 1: Parse filtered text
+    print("\n📝 Example 1: Parse Filtered Text")
+    filtered_text = """
+    title: Wireless Keyboard Pro
+    price: €49.99
+    rating: 4.5 ★
+    """
+    
+    result = hero.run(filtered_text, items, content_output_format="markdown")
+    print(f"Success: {result.success}")
+    print(f"Content: {result.content}")
+    print(f"Content: {result.error}")
+    print(f"Elapsed: {result.elapsed_time:.2f}s")
+    if result.usage:
+        print(f"Cost: ${result.usage.get('total_cost', 0):.4f}")
+
+
 
 def example_usage():
     """Examples of using ParseHero."""
@@ -263,8 +315,8 @@ if __name__ == "__main__":
     
     
     # Run sync examples
-    example_usage()
-    
+    # example_usage()
+    example_usage2()
     # # Run async example
     # print("\n" + "=" * 50)
     # asyncio.run(example_async_usage())

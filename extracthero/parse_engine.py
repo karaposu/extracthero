@@ -22,14 +22,15 @@ class ParseEngine:
         corpus: str | Dict[str, Any],
         items: WhatToRetain | List[WhatToRetain],
         enforce_llm_based_parse: bool = False,
-        model_name: Optional[str] = None
+        model_name: Optional[str] = None, 
+        content_output_format="json"
     ) -> GenerationResult:
         """
         Execute parsing using LLM.
         
         Always uses LLM parsing for all inputs.
         """
-        return self._parse_via_llm(corpus, items, model_name)
+        return self._parse_via_llm(corpus, items, model_name, content_output_format=content_output_format)
 
     async def execute_parsing_async(
         self,
@@ -47,7 +48,8 @@ class ParseEngine:
         self, 
         corpus: str | Dict[str, Any], 
         items: WhatToRetain | List[WhatToRetain],
-        model_name: Optional[str] = None
+        model_name: Optional[str] = None, 
+        content_output_format="json"
     ) -> GenerationResult:
         """Parse using LLM for all inputs."""
         try:
@@ -61,7 +63,7 @@ class ParseEngine:
             model = model_name or "gpt-4o-mini"
             
             # Call LLM
-            return self.llm.parse_via_llm(corpus_str, prompt, model=model)
+            return self.llm.parse_via_llm(corpus_str, prompt, model=model, content_output_format=content_output_format)
             
         except Exception as e:
             return GenerationResult(

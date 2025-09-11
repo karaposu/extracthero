@@ -370,9 +370,12 @@ class ExtractOp:
     
     content: Optional[Any] = None
     elapsed_time: float = 0.0
-    usage: Optional[Dict[str, Any]] = None
     error: Optional[str] = None
     start_time: Any = None
+
+    usage: Optional[Dict[str, Any]] = None
+    
+    
     
     # HTML reduction phase
     reduced_html: Optional[str] = None

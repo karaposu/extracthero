@@ -65,6 +65,7 @@ class ExtractHero:
         reduce_html: bool = True,
         model_name: Optional[str] = None,
         trim_char_length: Optional[int] = None,
+        content_output_format="json"
     ) -> ExtractOp:
         """
         Three-phase extraction pipeline: HTML Reduction → Trimming → Filter → Parse.
@@ -172,7 +173,8 @@ class ExtractHero:
         parse_op = self.parse_hero.run(
             filter_op.content, 
             extraction_spec,
-            model_name=model_name
+            model_name=model_name,
+            content_output_format=content_output_format
         )
         parse_output_tokens = self._count_tokens(parse_op.content if parse_op.success else None)
         stage_tokens["Parse"] = {
@@ -639,7 +641,8 @@ def main() -> None:
             specs, 
             reduce_html=True,
             # trim_char_length=50000  # Trim to 50,000 chars
-            trim_char_length=None 
+            trim_char_length=None ,
+            content_output_format="markdown"
         )
         
         if extract_op.success:

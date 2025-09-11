@@ -34,32 +34,52 @@ class MyLLMService(BaseLLMService):
         corpus: str,
         parse_keywords=None, 
         model = None,
+        content_output_format="json"
     ) -> GenerationResult:
         
-        
-        user_prompt = prompts.PARSE_VIA_LLM_PROMPT.format(
-            corpus=corpus,
-            parse_keywords=parse_keywords,
-           
-        )
-        
 
-       
-        
-        pipeline_config = [
+        user_prompt=None
+        pipeline_config=None
+
+
+        if content_output_format=="json":
+
+            user_prompt = prompts.PARSE_2_JSON_VIA_LLM_PROMPT.format(
+                corpus=corpus,
+                parse_keywords=parse_keywords,
+                )
+            
+            pipeline_config = [
             {
                 "type": "ConvertToDict",
                 "params": {},
             }
-        ]
-       
+            ]
+            
+        elif content_output_format=="markdown":
+            
+            user_prompt = prompts.PARSE_2_MARKDOWN_VIA_LLM_PROMPT.format(
+                corpus=corpus,
+                parse_keywords=parse_keywords,
+                content_output_format=content_output_format
+                )
+            pipeline_config = []
         
+        elif content_output_format=="text":
+            
+            user_prompt = prompts.PARSE_2_MARKDOWN_VIA_LLM_PROMPT.format(
+                corpus=corpus,
+                parse_keywords=parse_keywords,
+                content_output_format=content_output_format
+                )
+            pipeline_config = []
+            
+
         if model is None:
             model= "gpt-4o-mini"
             # model=  "gpt-4.1-nano"
           
-           
-        
+    
         generation_request = GenerationRequest(
             user_prompt=user_prompt,
            # formatted_prompt=user_prompt,
@@ -289,11 +309,48 @@ class MyLLMService(BaseLLMService):
         corpus: str,
         parse_keywords: list[str] | None = None,
         model: str | None = None,
+        content_output_format="json"
     ) -> GenerationResult:
         """
         Non-blocking version of parse_via_llm().
         Requires BaseLLMService.execute_generation_async.
         """
+        user_prompt=None
+        pipeline_config=None
+
+        if content_output_format=="json":
+
+            user_prompt = prompts.PARSE_2_JSON_VIA_LLM_PROMPT.format(
+                corpus=corpus,
+                parse_keywords=parse_keywords,
+                )
+            
+            pipeline_config = [
+            {
+                "type": "ConvertToDict",
+                "params": {},
+            }
+            ]
+            
+        elif content_output_format=="markdown":
+            
+            user_prompt = prompts.PARSE_2_MARKDOWN_VIA_LLM_PROMPT.format(
+                corpus=corpus,
+                parse_keywords=parse_keywords,
+                content_output_format=content_output_format
+                )
+            pipeline_config = []
+        
+        elif content_output_format=="text":
+            
+            user_prompt = prompts.PARSE_2_MARKDOWN_VIA_LLM_PROMPT.format(
+                corpus=corpus,
+                parse_keywords=parse_keywords,
+                content_output_format=content_output_format
+                )
+            pipeline_config = []
+
+
         user_prompt = prompts.PARSE_VIA_LLM_PROMPT.format(
             corpus=corpus,
             parse_keywords=parse_keywords,

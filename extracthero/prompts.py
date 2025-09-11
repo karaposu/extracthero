@@ -12,14 +12,14 @@ Here is explicit keywords which should be used for parsing:
 {parse_keywords}
 
 Task Description:
-Your job is to parse the text into a markdown format and using given explicit keywords for title names and subtitle names. 
+Your job is to parse the text into pure markdown format using the given keywords as markdown headings (# for titles, ## for 
+  subtitles).
+
+ 
 Do NOT add or remove or normalize information. Your job is parsing in a readable understandable format. 
 IF there is no information regarding any explicit keywords into corpus, you must put it's value as None 
 
-If corpus includes multiple isolated keyword related content, output a list of markdown with given keyword. 
-ALSO do not add any extra keys or layers other than given explicit_dict_keywords
-
-Give the output in strict Markdown format without HTML TAGS
+Give the output in strict Markdown format without HTML TAGS unless they include it. 
 
 """
 

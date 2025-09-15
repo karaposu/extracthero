@@ -192,13 +192,13 @@ class MyLLMService(BaseLLMService):
    
             )
         elif filter_strategy=="contextual":
-
+            
             user_prompt = prompts.PROPMT_filter_via_llm_contextual.format(
             corpus=corpus,
             thing_to_extract=thing_to_extract
    
             )
-
+        
         elif filter_strategy=="recall":
             user_prompt = prompts.PROPMT_filter_via_llm_recall.format(
             corpus=corpus,
@@ -216,9 +216,9 @@ class MyLLMService(BaseLLMService):
     
     
         if model is None:
-            #model= "gpt-4o-mini"
+            model= "gpt-4o-mini"
             
-            model=  "gpt-4.1-nano"
+            #model=  "gpt-4.1-nano"
         
         generation_request = GenerationRequest(
             # formatted_prompt=user_prompt,
@@ -232,6 +232,65 @@ class MyLLMService(BaseLLMService):
 
         result = self.execute_generation(generation_request)
         return result
+    
+    def get_deletions_via_llm(
+        self,
+        numbered_corpus: str,
+        thing_to_extract: str,
+        model: Optional[str] = None,
+        filter_strategy: str = "liberal"
+    ) -> GenerationResult:
+        """
+        Get line deletion indices instead of filtered content.
+        Output is structured JSON with line ranges.
+        """
+        
+        # Select appropriate prompt based on strategy
+        if filter_strategy == "liberal":
+            user_prompt = prompts.SUBTRACTIVE_FILTER_LIBERAL.format(
+                numbered_corpus=numbered_corpus,
+                thing_to_extract=thing_to_extract
+            )
+        elif filter_strategy == "contextual":
+            user_prompt = prompts.SUBTRACTIVE_FILTER_CONTEXTUAL.format(
+                numbered_corpus=numbered_corpus,
+                thing_to_extract=thing_to_extract
+            )
+        elif filter_strategy == "inclusive":
+            user_prompt = prompts.SUBTRACTIVE_FILTER_INCLUSIVE.format(
+                numbered_corpus=numbered_corpus,
+                thing_to_extract=thing_to_extract
+            )
+        elif filter_strategy == "recall":
+            user_prompt = prompts.SUBTRACTIVE_FILTER_RECALL.format(
+                numbered_corpus=numbered_corpus,
+                thing_to_extract=thing_to_extract
+            )
+        else:  # base or default
+            user_prompt = prompts.SUBTRACTIVE_FILTER_BASE.format(
+                numbered_corpus=numbered_corpus,
+                thing_to_extract=thing_to_extract
+            )
+        
+        pipeline_config = [
+            {
+                "type": "ConvertToDict",
+                "params": {},
+            }
+        ]
+        
+        if model is None:
+            model = "gpt-4o-mini"
+        
+        generation_request = GenerationRequest(
+            user_prompt=user_prompt,
+            model=model,
+            output_type="dict",  # Structured output
+            operation_name="get_deletions_via_llm",
+            pipeline_config=pipeline_config
+        )
+        
+        return self.execute_generation(generation_request)
     
     
 

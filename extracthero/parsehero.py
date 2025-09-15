@@ -24,6 +24,9 @@ warnings.filterwarnings(
     message=r".*extracthero\.parsehero.*"
 )
 
+import logging
+logger = logging.getLogger(__name__)
+
 
 class ParseHero:
     """High-level parsing orchestrator using ParseEngine for core logic."""
@@ -65,6 +68,11 @@ class ParseHero:
             Parsing operation result with extracted content
         """
         start_ts = time()
+
+
+
+        # logger.debug("content_output_format")
+        # logger.debug(content_output_format)
 
         # Use ParseEngine for core logic
         generation_result = self.engine.execute_parsing(

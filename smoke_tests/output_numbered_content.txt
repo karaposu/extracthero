@@ -1,0 +1,35 @@
+Line 1: Looking at the original HTML, there are 2 main voltage specifications for this diode:
+Line 2: Complete Voltage Information (Should be captured):
+Line 3: 
+Line 4: Reverse Voltage (VR): V<sub>R</sub> ≤ 100 V
+Line 5: Forward Voltage (VF): V<sub>F</sub> [max] (mV): 1000@IF=50mA
+Line 6: 
+Line 7: What Each Strategy Actually Got:
+Line 8: StrategyReverse Voltage (VR)Forward Voltage (VF)ContextLiberal ✅✅ Got it✅ Got it✅ Full table structureContextual ❌✅ Got it❌ MISSED IT❌ Fragmented pieces
+Line 9: The Problem with Contextual Strategy:
+Line 10: ❌ Missing Forward Voltage Completely
+Line 11: The contextual strategy missed this entire voltage specification:
+Line 12: html<th>V<sub>F</sub> [max] (mV)</th>
+Line 13: <td>1000@IF=50mA</td>
+Line 14: ❌ Lost Table Context
+Line 15: Instead of getting the full parametrics table showing both voltage specs together, it gave you 3 disconnected fragments:
+Line 16: 
+Line 17: Fragment 1: Reverse voltage alone
+Line 18: Fragment 2: Just VR max value
+Line 19: Fragment 3: Duplicate reverse voltage
+Line 20: 
+Line 21: ✅ What Liberal Strategy Got Right
+Line 22: 
+Line 23: Both voltage specifications (VR + VF)
+Line 24: Complete table structure showing how they relate
+Line 25: Single coherent section with all voltage info together
+Line 26: 
+Line 27: For Your "All Information About Voltage" Spec:
+Line 28: You should get:
+Line 29: 
+Line 30: Reverse voltage: VR ≤ 100 V
+Line 31: Forward voltage: VF = 1000 mV @ IF=50mA
+Line 32: The complete parametrics context
+Line 33: 
+Line 34: Contextual gave you 60% of voltage info, Liberal gave you 100%.
+Line 35: That's exactly what I meant by "loses the full parametrics table" - it missed the forward voltage specification entirely and fragmented what it did find! 🎯

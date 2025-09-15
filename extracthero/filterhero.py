@@ -64,63 +64,47 @@ class FilterHero:
         self,
         text: str | Dict[str, Any],
         extraction_spec: WhatToRetain | List[WhatToRetain],
-    
-        filter_strategy: str = "liberal",  
+        filter_strategy: str = "liberal",
+        filter_mode: str = "extractive",  # New parameter: "extractive" or "subtractive"
+        max_line_length_for_indexing: Optional[int] = 200,  # New parameter for line truncation in indexed content
+        line_format: str = "[{n}]"  # New parameter for line number format
     ) -> FilterOp:
         """
-        End-to-end filter phase.
+        End-to-end filter phase with support for both extractive and subtractive modes.
+        
+        Parameters
+        ----------
+        filter_mode : str
+            "extractive" - Traditional mode, LLM outputs filtered content (default)
+            "subtractive" - New mode, LLM outputs line numbers to delete
+        max_line_length_for_indexing : int or None
+            For subtractive mode: max characters per line before truncation in the indexed/numbered content shown to LLM.
+            Only affects what the LLM sees, not the final output.
+            Default 200 to prevent very long lines from consuming tokens.
+            Set to None for no truncation.
+        line_format : str
+            Format for line numbers in subtractive mode. Use {n} for number.
+            Examples: "[{n}]" → "[1]", "L{n}:" → "L1:", "{n:04d}|" → "0001|"
+            Default: "[{n}]"
         """
+       
+        
+        if filter_mode == "subtractive":
+            return self._run_subtractive(text, extraction_spec, filter_strategy, max_line_length_for_indexing, line_format)
+        else:
+            return self._run_extractive(text, extraction_spec, filter_strategy)
+    
+    def _run_extractive(self, text, extraction_spec, filter_strategy):
+
         ts = time()
-        content=None
-        filtered_data_token_size = None  
+        """Existing extractive filtering logic"""
+        content = None
+        filtered_data_token_size = None
 
         gen_result = self.engine.execute_filtering(
             text, 
             extraction_spec, 
-            filter_strategy  
-        )
-
-        if gen_result.success:
-           content=gen_result.content
-           # gen_result.content, gen_result.usage 
-           if content is not None:
-            try:
-                
-                filtered_data_token_size = len(encoding.encode(content))
-            except Exception as e:
-                filtered_data_token_size = None
-
-        
-        # 7) Wrap & return
-        return FilterOp.from_result(
-            config=self.config,
-            content=content,
-            usage=gen_result.usage,
-            generation_result=gen_result,  # ← Pass the generation result here
-            start_time=ts,
-            success=gen_result.success,
-            error=None if gen_result.success else "LLM filter failed",
-            filtered_data_token_size=filtered_data_token_size,
-            filter_strategy=filter_strategy
-        )
-    
-
-    async def run_async(
-        self,
-        text: str | Dict[str, Any],
-        extraction_spec: WhatToRetain | List[WhatToRetain],
-        filter_strategy: str = "contextual",
-    ) -> FilterOp:
-        """Async end-to-end filter phase."""
-        ts = time()
-        content = None
-        filtered_data_token_size = None  # Initialize it here
-        
-        
-        gen_result = await self.engine.execute_filtering_async(
-            text, 
-            extraction_spec, 
-            filter_strategy  
+            filter_strategy
         )
 
         if gen_result.success:
@@ -128,7 +112,7 @@ class FilterHero:
             if content is not None:
                 try:
                     filtered_data_token_size = len(encoding.encode(content))
-                except Exception as e:
+                except Exception:
                     filtered_data_token_size = None
 
         return FilterOp.from_result(
@@ -140,8 +124,221 @@ class FilterHero:
             success=gen_result.success,
             error=None if gen_result.success else "LLM filter failed",
             filtered_data_token_size=filtered_data_token_size,
-            filter_strategy=filter_strategy
+            filter_strategy=filter_strategy,
+            filter_mode="extractive"
         )
+    
+    def _run_subtractive(self, text, extraction_spec, filter_strategy, max_line_length_for_indexing=200, line_format="[{n}]"):
+        """
+        New subtractive filtering logic using line-based deletion.
+        
+        Parameters
+        ----------
+        max_line_length_for_indexing : int or None
+            Max characters per line in indexed/numbered content shown to LLM.
+            Only affects LLM input, not final output.
+            Default 200 to prevent very long lines from consuming tokens.
+            Set to None for no truncation.
+        line_format : str
+            Format for line numbers. Default "[{n}]" gives [1], [2], etc.
+        """
+        start_time = time()
+        
+        # Convert dict to string if needed
+        if isinstance(text, dict):
+            text = _json.dumps(text, indent=2)
+        
+        # Split into lines for processing
+        original_lines = text.split('\n')
+        
+        # Step 1: Create numbered content for LLM
+        numbered_content = self._prepare_numbered_content(
+            original_lines, 
+            max_line_length=max_line_length_for_indexing,
+            line_format=line_format
+        )
+        
+        # Step 2: Get deletion indices from LLM
+        gen_result = self.engine.execute_subtractive_filtering(
+            numbered_content,
+            extraction_spec,
+            filter_strategy
+        )
+        
+        # Step 3: Parse and apply deletions
+        if gen_result.success:
+            deletions = self._parse_deletion_response(gen_result.content)
+            validated_deletions = self._validate_line_ranges(deletions, len(original_lines))
+            filtered_text = self._apply_line_deletions(original_lines, validated_deletions)
+            
+            # Calculate token size
+            try:
+                filtered_data_token_size = len(encoding.encode(filtered_text))
+            except:
+                filtered_data_token_size = None
+            
+            # Calculate statistics
+            lines_removed = sum(d['end_line'] - d['start_line'] + 1 for d in validated_deletions)
+            
+            return FilterOp.from_result(
+                config=self.config,
+                content=filtered_text,
+                usage=gen_result.usage,
+                generation_result=gen_result,
+                start_time=start_time,
+                success=True,
+                error=None,
+                filtered_data_token_size=filtered_data_token_size,
+                filter_strategy=filter_strategy,
+                filter_mode="subtractive",
+                deletions_applied=validated_deletions,
+                original_line_count=len(original_lines),
+                filtered_line_count=len(filtered_text.split('\n')),
+                lines_removed=lines_removed
+            )
+        else:
+            return FilterOp.from_result(
+                config=self.config,
+                content=None,
+                usage=gen_result.usage,
+                generation_result=gen_result,
+                start_time=start_time,
+                success=False,
+                error=f"Subtractive filtering failed: {gen_result.error_message if hasattr(gen_result, 'error_message') else 'Unknown error'}",
+                filtered_data_token_size=None,
+                filter_strategy=filter_strategy,
+                filter_mode="subtractive"
+            )
+    
+    def _prepare_numbered_content(self, lines, max_line_length=None, line_format="[{n}]"):
+        """
+        Convert lines to numbered content for LLM processing.
+        
+        Parameters
+        ----------
+        lines : list
+            List of text lines to number
+        max_line_length : int or None
+            Maximum characters per line before truncation. 
+            If None, no truncation is applied.
+            Default None means show full lines.
+        line_format : str
+            Format string for line numbers. Use {n} for the line number.
+            Examples: "[{n}]" → "[1]", "L{n}:" → "L1:", "{n:04d}|" → "0001|"
+            Default: "[{n}]"
+        
+        Returns
+        -------
+        str
+            Numbered content with optional truncation for LLM processing
+        """
+        numbered_lines = []
+        
+        for i, line in enumerate(lines, 1):
+            # Optionally truncate long lines
+            if max_line_length and len(line) > max_line_length:
+                display_line = f"{line[:max_line_length]}..."
+            else:
+                display_line = line
+            
+            # Format the line number
+            line_prefix = line_format.format(n=i)
+            numbered_lines.append(f"{line_prefix} {display_line}")
+        
+        return '\n'.join(numbered_lines)
+    
+    def _parse_deletion_response(self, llm_response):
+        """Parse LLM's deletion response into structured format"""
+        try:
+            if isinstance(llm_response, str):
+                data = _json.loads(llm_response)
+            else:
+                data = llm_response
+            
+            return data.get('deletions', [])
+        except Exception as e:
+            print(f"Failed to parse deletion response: {e}")
+            return []
+    
+    def _validate_line_ranges(self, deletions, total_lines):
+        """Validate that line ranges are within bounds"""
+        valid_deletions = []
+        
+        for deletion in deletions:
+            start = deletion.get('start_line', 0)
+            end = deletion.get('end_line', 0)
+            
+            if 1 <= start <= total_lines and 1 <= end <= total_lines and start <= end:
+                valid_deletions.append(deletion)
+            else:
+                print(f"Invalid deletion range: {start}-{end} (total lines: {total_lines})")
+        
+        return valid_deletions
+    
+    def _apply_line_deletions(self, lines, deletions):
+        """Apply deletions to get filtered text"""
+        lines_to_delete = set()
+        
+        for deletion in deletions:
+            for line_num in range(deletion['start_line'], deletion['end_line'] + 1):
+                lines_to_delete.add(line_num)
+        
+        filtered_lines = []
+        for i, line in enumerate(lines, 1):
+            if i not in lines_to_delete:
+                filtered_lines.append(line)
+        
+        return '\n'.join(filtered_lines)
+    
+    
+    async def run_async(
+        self,
+        text: str | Dict[str, Any],
+        extraction_spec: WhatToRetain | List[WhatToRetain],
+        filter_strategy: str = "contextual",
+        filter_mode: str = "extractive",  # New parameter
+        max_line_length_for_indexing: Optional[int] = 200,
+        line_format: str = "[{n}]"
+    ) -> FilterOp:
+        """Async end-to-end filter phase with support for both modes."""
+        ts = time()
+        
+        if filter_mode == "subtractive":
+            # Subtractive mode doesn't have async implementation yet in engine
+            # For now, we'll use sync version in async wrapper
+            # TODO: Implement async subtractive filtering in engine
+            return self._run_subtractive(text, extraction_spec, filter_strategy, max_line_length_for_indexing, line_format)
+        else:
+            # Extractive mode (existing async implementation)
+            content = None
+            filtered_data_token_size = None
+            
+            gen_result = await self.engine.execute_filtering_async(
+                text, 
+                extraction_spec, 
+                filter_strategy  
+            )
+
+            if gen_result.success:
+                content = gen_result.content
+                if content is not None:
+                    try:
+                        filtered_data_token_size = len(encoding.encode(content))
+                    except Exception:
+                        filtered_data_token_size = None
+
+            return FilterOp.from_result(
+                config=self.config,
+                content=content,
+                usage=gen_result.usage,
+                generation_result=gen_result,
+                start_time=ts,
+                success=gen_result.success,
+                error=None if gen_result.success else "LLM filter failed",
+                filtered_data_token_size=filtered_data_token_size,
+                filter_strategy=filter_strategy,
+                filter_mode="extractive"
+            )
     
 
     def _combine_usage(self, usage_list: List[Dict[str, Any]]) -> Optional[Dict[str, Any]]:

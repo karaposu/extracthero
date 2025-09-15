@@ -55,6 +55,35 @@ class FilterEngine:
         return gen_results
         #return gen_results.content, gen_results.usage, gen_results
     
+    def execute_subtractive_filtering(
+        self,
+        numbered_corpus: str,
+        extraction_spec: Union[WhatToRetain, List[WhatToRetain]],
+        strategy: str,
+        model_name: Optional[str] = None
+    ) -> GenerationResult:
+        """
+        Execute subtractive filtering - returns line numbers to delete.
+        
+        This bypasses output token limitations by returning indices
+        instead of content.
+        """
+        
+        if isinstance(extraction_spec, WhatToRetain):
+            target_desc = extraction_spec.desc
+        else:
+            target_desc = "; ".join(spec.desc for spec in extraction_spec)
+        
+        # Use specialized subtractive filtering via LLM
+        gen_results = self.llm.get_deletions_via_llm(
+            numbered_corpus,
+            target_desc,
+            filter_strategy=strategy,
+            model=model_name
+        )
+        
+        return gen_results
+    
     
     async def execute_filtering_async(
         self,

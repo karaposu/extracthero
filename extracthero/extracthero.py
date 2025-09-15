@@ -3,6 +3,9 @@
 
 from __future__ import annotations
 
+import logging
+logger = logging.getLogger(__name__)
+
 from time import time
 from typing import List, Union, Optional, Tuple, Dict
 import json
@@ -21,6 +24,9 @@ from extracthero.filterhero import FilterHero
 from extracthero.parsehero import ParseHero
 from extracthero.utils import load_html
 from domreducer import HtmlReducer
+
+
+
 
 
 class ExtractHero:
@@ -91,6 +97,11 @@ class ExtractHero:
             Rich result object with content, timing, usage, and error details
         """
         extraction_start_time = time()
+        
+        self.content_output_format=content_output_format
+        
+        # logger.debug("content_output_format")
+        # logger.debug(content_output_format)
         
         # Initialize tracking variables
         reduced_html = None
@@ -170,6 +181,8 @@ class ExtractHero:
 
         # Phase 2: Parsing
         parse_input_tokens = filter_output_tokens  # Use the filter output tokens
+
+        
         parse_op = self.parse_hero.run(
             filter_op.content, 
             extraction_spec,

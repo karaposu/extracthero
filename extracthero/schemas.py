@@ -193,10 +193,17 @@ class FilterOp:
     config: ExtractConfig           # The ExtractConfig used for this filter run
     
     generation_result: Optional[Any] = None  # holds the GenerationResult from LLM call
-    error: Optional[str] = None,  
-    start_time: Any =None,
-    filtered_data_token_size: Optional[Any] = None,  # Add this parameter,
-    filter_strategy: Optional[Any] = None,
+    error: Optional[str] = None  
+    start_time: Any = None
+    filtered_data_token_size: Optional[Any] = None  # Add this parameter
+    filter_strategy: Optional[Any] = None
+    
+    # New fields for subtractive mode
+    filter_mode: Optional[str] = None  # "extractive" or "subtractive"
+    deletions_applied: Optional[List[Dict]] = None  # Line ranges deleted
+    original_line_count: Optional[int] = None
+    filtered_line_count: Optional[int] = None
+    lines_removed: Optional[int] = None
 
     @classmethod
     def from_result(
@@ -204,13 +211,17 @@ class FilterOp:
         config: ExtractConfig,
         content: Any,
         usage: Optional[Dict[str, Any]],
-        start_time: float= None,
+        start_time: float = None,
         generation_result: Optional[Any] = None,  
         success: bool = True,
         error: Optional[str] = None, 
-        filtered_data_token_size= None, 
-        filter_strategy: Optional[Any] = None,  
-         
+        filtered_data_token_size = None, 
+        filter_strategy: Optional[Any] = None,
+        filter_mode: Optional[str] = None,
+        deletions_applied: Optional[List[Dict]] = None,
+        original_line_count: Optional[int] = None,
+        filtered_line_count: Optional[int] = None,
+        lines_removed: Optional[int] = None
     ) -> "FilterOp":
         elapsed = time.time() - start_time
         return cls(
@@ -223,7 +234,12 @@ class FilterOp:
             error=error, 
             start_time=start_time,
             filtered_data_token_size=filtered_data_token_size,
-            filter_strategy=filter_strategy
+            filter_strategy=filter_strategy,
+            filter_mode=filter_mode,
+            deletions_applied=deletions_applied,
+            original_line_count=original_line_count,
+            filtered_line_count=filtered_line_count,
+            lines_removed=lines_removed
         )
     
 

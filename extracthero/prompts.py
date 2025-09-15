@@ -381,3 +381,126 @@ PROPMT_filter_via_llm_base = """Here is the text corpus relevant to our task:
                             Your job is to filter all relevant information from the provided corpus according to the criteria above.
                             The output should be a text corpus containing the filtered piece(s), preserving their original wording.
                             """
+
+
+# ============== SUBTRACTIVE FILTERING PROMPTS ==============
+
+SUBTRACTIVE_FILTER_LIBERAL = """
+You are reviewing numbered content to identify irrelevant sections.
+
+CONTENT:
+{numbered_corpus}
+
+WHAT TO PRESERVE:
+{thing_to_extract}
+
+TASK:
+Identify line ranges that should be DELETED (irrelevant content).
+Be liberal - when in doubt, keep the content. Only delete clearly irrelevant sections.
+
+OUTPUT FORMAT (JSON only):
+{{
+  "deletions": [
+    {{"start_line": 10, "end_line": 25, "reason": "advertisement"}},
+    {{"start_line": 45, "end_line": 47, "reason": "navigation_menu"}}
+  ]
+}}
+
+Output ONLY the JSON with line numbers to delete. Nothing else.
+"""
+
+SUBTRACTIVE_FILTER_CONTEXTUAL = """
+You are reviewing numbered content to identify irrelevant sections.
+
+CONTENT:
+{numbered_corpus}
+
+WHAT TO PRESERVE:
+{thing_to_extract}
+
+TASK:
+Identify line ranges to DELETE while preserving semantic context.
+Keep complete structural units (full tables, complete lists, entire sections).
+Delete only content clearly unrelated to the target.
+
+OUTPUT FORMAT (JSON only):
+{{
+  "deletions": [
+    {{"start_line": X, "end_line": Y, "reason": "content_type"}}
+  ]
+}}
+
+Preserve context around relevant information.
+Output ONLY the JSON.
+"""
+
+SUBTRACTIVE_FILTER_INCLUSIVE = """
+You are reviewing numbered content to identify sections to remove.
+
+CONTENT:
+{numbered_corpus}
+
+WHAT TO PRESERVE:
+{thing_to_extract}
+
+TASK:
+Identify line ranges that are DEFINITELY irrelevant and should be deleted.
+Be very conservative - include anything that MIGHT be related.
+Only delete content you are certain is unrelated.
+
+OUTPUT FORMAT (JSON only):
+{{
+  "deletions": [
+    {{"start_line": X, "end_line": Y, "reason": "type_of_content"}}
+  ]
+}}
+
+Output ONLY the JSON with line ranges to delete.
+"""
+
+SUBTRACTIVE_FILTER_RECALL = """
+You are reviewing numbered content to identify irrelevant sections.
+
+CONTENT:
+{numbered_corpus}
+
+WHAT TO PRESERVE:
+{thing_to_extract}
+
+TASK:
+Delete ONLY content that is completely unrelated to our target.
+Prioritize recall - it's better to keep too much than lose relevant content.
+Be extremely conservative with deletions.
+
+OUTPUT FORMAT (JSON only):
+{{
+  "deletions": [
+    {{"start_line": X, "end_line": Y, "reason": "content_type"}}
+  ]
+}}
+
+Output ONLY the JSON.
+"""
+
+SUBTRACTIVE_FILTER_BASE = """
+You are reviewing numbered content to identify irrelevant sections.
+
+CONTENT:
+{numbered_corpus}
+
+WHAT TO PRESERVE:
+{thing_to_extract}
+
+TASK:
+Identify line ranges containing irrelevant content that should be deleted.
+Keep all content related to the criteria above.
+
+OUTPUT FORMAT (JSON only):
+{{
+  "deletions": [
+    {{"start_line": X, "end_line": Y, "reason": "brief_description"}}
+  ]
+}}
+
+Output ONLY the JSON with line numbers to delete.
+"""

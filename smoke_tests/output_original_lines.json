@@ -1,0 +1,27 @@
+{
+  "line_count": 35,
+  "first_10_lines": [
+    "Looking at the original HTML, there are 2 main voltage specifications for this diode:",
+    "Complete Voltage Information (Should be captured):",
+    "",
+    "Reverse Voltage (VR): V<sub>R</sub> \u2264 100 V",
+    "Forward Voltage (VF): V<sub>F</sub> [max] (mV): 1000@IF=50mA",
+    "",
+    "What Each Strategy Actually Got:",
+    "StrategyReverse Voltage (VR)Forward Voltage (VF)ContextLiberal \u2705\u2705 Got it\u2705 Got it\u2705 Full table structureContextual \u274c\u2705 Got it\u274c MISSED IT\u274c Fragmented pieces",
+    "The Problem with Contextual Strategy:",
+    "\u274c Missing Forward Voltage Completely"
+  ],
+  "last_10_lines": [
+    "",
+    "For Your \"All Information About Voltage\" Spec:",
+    "You should get:",
+    "",
+    "Reverse voltage: VR \u2264 100 V",
+    "Forward voltage: VF = 1000 mV @ IF=50mA",
+    "The complete parametrics context",
+    "",
+    "Contextual gave you 60% of voltage info, Liberal gave you 100%.",
+    "That's exactly what I meant by \"loses the full parametrics table\" - it missed the forward voltage specification entirely and fragmented what it did find! \ud83c\udfaf"
+  ]
+}

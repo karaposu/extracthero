@@ -136,7 +136,7 @@ def test_json_content():
         result = filter_hero.run(
             text=json_content,  # Pass dict directly
             extraction_spec=specs,
-            filter_strategy="liberal",
+            filter_strategy="relaxed",
             filter_mode="extractive"
         )
         
@@ -155,7 +155,7 @@ def test_json_content():
         result_sub = filter_hero.run(
             text=json_content,
             extraction_spec=specs,
-            filter_strategy="liberal",
+            filter_strategy="relaxed",
             filter_mode="subtractive"
         )
         
@@ -316,7 +316,7 @@ Emojis: 🎯 Target achieved! 🚀"""
         result = filter_hero.run(
             text=special_content,
             extraction_spec=specs,
-            filter_strategy="liberal",
+            filter_strategy="relaxed",
             filter_mode="extractive"
         )
         

@@ -53,14 +53,14 @@ def test_mode_output_consistency():
         result_ext = filter_hero.run(
             text=test_content,
             extraction_spec=specs,
-            filter_strategy="liberal",
+            filter_strategy="relaxed",
             filter_mode="extractive"
         )
         
         result_sub = filter_hero.run(
             text=test_content,
             extraction_spec=specs,
-            filter_strategy="liberal",
+            filter_strategy="relaxed",
             filter_mode="subtractive"
         )
         
@@ -228,12 +228,12 @@ Line 5: Footer Info"""
             )
             
             # Check line count metrics
-            if result.original_line_count and result.filtered_line_count:
-                reduction = ((result.original_line_count - result.filtered_line_count) / 
+            if result.original_line_count and result.retained_line_count:
+                reduction = ((result.original_line_count - result.retained_line_count) / 
                            result.original_line_count * 100)
                 print(f"  Content reduction: {reduction:.1f}%")
                 print(f"  Original lines: {result.original_line_count}")
-                print(f"  Filtered lines: {result.filtered_line_count}")
+                print(f"  Retained lines: {result.retained_line_count}")
         
     except Exception as e:
         print_result(False, f"Exception: {e}")
@@ -258,7 +258,7 @@ def test_mode_parameters():
         result1 = filter_hero.run(
             text=test_content,
             extraction_spec=specs,
-            filter_strategy="liberal",
+            filter_strategy="relaxed",
             filter_mode="subtractive",
             line_format="#{n}:",
             max_line_length_for_indexing=50
@@ -273,7 +273,7 @@ def test_mode_parameters():
         result2 = filter_hero.run(
             text=test_content,
             extraction_spec=specs,
-            filter_strategy="liberal",
+            filter_strategy="relaxed",
             filter_mode="subtractive",
             max_line_length_for_indexing=None
         )
@@ -287,7 +287,7 @@ def test_mode_parameters():
         result3 = filter_hero.run(
             text=test_content,
             extraction_spec=specs,
-            filter_strategy="liberal",
+            filter_strategy="relaxed",
             filter_mode="extractive"
         )
         
@@ -344,7 +344,7 @@ def test_filter_chain():
         chain_result = filter_hero.chain(
             text=complex_content,
             stages=[
-                (stage1_specs, "liberal"),
+                (stage1_specs, "relaxed"),
                 (stage2_specs, "contextual")
             ]
         )

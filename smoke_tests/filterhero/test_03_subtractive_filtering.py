@@ -69,8 +69,8 @@ Line 7: Copyright notice"""
                 f"Original line count: {result.original_line_count}"
             )
             passed &= print_result(
-                result.filtered_line_count is not None,
-                f"Filtered line count: {result.filtered_line_count}"
+                result.retained_line_count is not None,
+                f"Retained line count: {result.retained_line_count}"
             )
             
             # Check content
@@ -162,7 +162,7 @@ Another short line"""
             # Line formatting shouldn't affect final output
             if result1.content and result2.content:
                 passed &= print_result(
-                    result1.filtered_line_count == result2.filtered_line_count,
+                    result1.retained_line_count == result2.retained_line_count,
                     "Line format doesn't affect filtering outcome"
                 )
         

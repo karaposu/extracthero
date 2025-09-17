@@ -43,7 +43,7 @@ def test_empty_content():
         result_empty = filter_hero.run(
             text="",
             extraction_spec=specs,
-            filter_strategy="liberal",
+            filter_strategy="relaxed",
             filter_mode="extractive"
         )
         
@@ -56,7 +56,7 @@ def test_empty_content():
         result_char = filter_hero.run(
             text="x",
             extraction_spec=specs,
-            filter_strategy="liberal",
+            filter_strategy="relaxed",
             filter_mode="subtractive"
         )
         
@@ -82,7 +82,7 @@ def test_empty_content():
         result_line = filter_hero.run(
             text="Single line of content",
             extraction_spec=specs,
-            filter_strategy="liberal",
+            filter_strategy="relaxed",
             filter_mode="subtractive"
         )
         
@@ -170,7 +170,7 @@ def test_malformed_inputs():
         result_html = filter_hero.run(
             text=malformed_html,
             extraction_spec=specs,
-            filter_strategy="liberal",
+            filter_strategy="relaxed",
             filter_mode="extractive"
         )
         
@@ -184,7 +184,7 @@ def test_malformed_inputs():
         result_json = filter_hero.run(
             text=invalid_json,  # Will be treated as string
             extraction_spec=specs,
-            filter_strategy="liberal",
+            filter_strategy="relaxed",
             filter_mode="subtractive"
         )
         
@@ -240,7 +240,7 @@ def test_multiple_specs():
         result = filter_hero.run(
             text=content,
             extraction_spec=multi_specs,
-            filter_strategy="liberal",
+            filter_strategy="relaxed",
             filter_mode="extractive"
         )
         
@@ -265,7 +265,7 @@ def test_multiple_specs():
         result_empty = filter_hero.run(
             text=content,
             extraction_spec=empty_specs,
-            filter_strategy="liberal",
+            filter_strategy="relaxed",
             filter_mode="extractive"
         )
         
@@ -298,7 +298,7 @@ def test_special_cases():
         result_long = filter_hero.run(
             text=long_line,
             extraction_spec=specs,
-            filter_strategy="liberal",
+            filter_strategy="relaxed",
             filter_mode="subtractive",
             max_line_length_for_indexing=200  # Should truncate
         )
@@ -334,7 +334,7 @@ def test_special_cases():
             result_none = filter_hero.run(
                 text=None,
                 extraction_spec=specs,
-                filter_strategy="liberal",
+                filter_strategy="relaxed",
                 filter_mode="extractive"
             )
             # Should fail gracefully
@@ -356,7 +356,7 @@ def test_special_cases():
         result_conflict = filter_hero.run(
             text="alpha beta gamma",
             extraction_spec=[conflict_spec],
-            filter_strategy="liberal",
+            filter_strategy="relaxed",
             filter_mode="extractive"
         )
         

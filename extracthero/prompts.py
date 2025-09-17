@@ -135,7 +135,7 @@ You are an expert evaluator analyzing the complete results of a filter strategy 
 
 **EXPERIMENT CONTEXT:**
 - **Task**: Extract "all information about voltage" from semiconductor product pages
-- **Strategies Tested**: liberal, inclusive, contextual, recall
+- **Strategies Tested**: relaxed, focused, contextual, preserve
 - **Runs Per Strategy**: 10 iterations each (40 total runs)
 - **System**: Two-phase extraction (FilterHero → ParseHero)
 
@@ -249,7 +249,7 @@ Analyze the complete experiment results now:
 
 
 
-PROPMT_filter_via_llm_INCLUSIVE="""
+PROPMT_filter_via_llm_FOCUSED="""
 
 
   Your task is to identify and extract all potentially relevant content from the source material.
@@ -281,7 +281,7 @@ Return all potentially relevant content. If absolutely nothing relates to the cr
 
 
 
-PROPMT_filter_via_llm_liberal= """
+PROPMT_filter_via_llm_RELAXED= """
 
 Extract all content that could be relevant to our needs. Err on the side of inclusion.
 
@@ -344,7 +344,7 @@ Extract complete, well-contextualized sections that preserve the relationships n
 """
 
 
-PROPMT_filter_via_llm_recall="""
+PROPMT_filter_via_llm_PRESERVE="""
 Scan the content below and extract ALL sections that relate to our target criteria. Be generous with inclusion.
 
         **CONTENT:**
@@ -371,7 +371,7 @@ Scan the content below and extract ALL sections that relate to our target criter
 
 
 
-PROPMT_filter_via_llm_base = """Here is the text corpus relevant to our task:
+PROPMT_filter_via_llm_STRICT = """Here is the text corpus relevant to our task:
                             {corpus}
 
                             Here is the information we are interested in:
@@ -385,7 +385,7 @@ PROPMT_filter_via_llm_base = """Here is the text corpus relevant to our task:
 
 # ============== SUBTRACTIVE FILTERING PROMPTS ==============
 
-SUBTRACTIVE_FILTER_LIBERAL = """
+SUBTRACTIVE_FILTER_RELAXED = """
 You are reviewing numbered content to identify irrelevant sections.
 
 CONTENT:
@@ -401,9 +401,11 @@ Be liberal - when in doubt, keep the content. Only delete clearly irrelevant sec
 OUTPUT FORMAT (JSON only):
 {{
   "deletions": [
-    {{"start_line": 10, "end_line": 25, "reason": "advertisement"}},
-    {{"start_line": 45, "end_line": 47, "reason": "navigation_menu"}}
-  ]
+    {{"start": 10, "end": 25}},
+    {{"start": 45, "end": 47}}
+  ],
+  "total_lines_to_delete": 20,
+  "reasoning": "Removed advertisements and navigation"
 }}
 
 Output ONLY the JSON with line numbers to delete. Nothing else.
@@ -426,7 +428,7 @@ Delete only content clearly unrelated to the target.
 OUTPUT FORMAT (JSON only):
 {{
   "deletions": [
-    {{"start_line": X, "end_line": Y, "reason": "content_type"}}
+    {{"start": X, "end": Y}}
   ]
 }}
 
@@ -434,7 +436,7 @@ Preserve context around relevant information.
 Output ONLY the JSON.
 """
 
-SUBTRACTIVE_FILTER_INCLUSIVE = """
+SUBTRACTIVE_FILTER_FOCUSED = """
 You are reviewing numbered content to identify sections to remove.
 
 CONTENT:
@@ -451,14 +453,14 @@ Only delete content you are certain is unrelated.
 OUTPUT FORMAT (JSON only):
 {{
   "deletions": [
-    {{"start_line": X, "end_line": Y, "reason": "type_of_content"}}
+    {{"start": X, "end": Y}}
   ]
 }}
 
 Output ONLY the JSON with line ranges to delete.
 """
 
-SUBTRACTIVE_FILTER_RECALL = """
+SUBTRACTIVE_FILTER_PRESERVE = """
 You are reviewing numbered content to identify irrelevant sections.
 
 CONTENT:
@@ -475,15 +477,70 @@ Be extremely conservative with deletions.
 OUTPUT FORMAT (JSON only):
 {{
   "deletions": [
-    {{"start_line": X, "end_line": Y, "reason": "content_type"}}
+    {{"start": X, "end": Y}}
   ]
 }}
 
 Output ONLY the JSON.
 """
 
-SUBTRACTIVE_FILTER_BASE = """
-You are reviewing numbered content to identify irrelevant sections.
+
+
+
+
+TOC= """
+Analyze this document from line 1 to the last line.
+Create a comprehensive breakdown of ALL of it.
+
+
+Corpus:
+  {numbered_corpus}
+
+
+ What counts as CONTENT for this analysis (used for is_content section in output):
+    {what_to_retain}
+
+OUTPUT MUST BE VALID JSON in this EXACT format:
+  {{
+    "sections": [
+      {{
+        "name": "section name",
+        "category": "navigation|content|metadata|code|footer|header",
+        "start_line": 1,
+        "end_line": 10,
+        "is_content": true,
+        "is_navigation": false,
+      }}
+    ]
+  }}
+
+  Rules:
+  1. Every line from 1 to {max_line} must be covered
+  2. No gaps between sections
+  3. Use exact integers for line numbers
+  4. Output ONLY valid JSON, no markdown formatting
+  5. Navigation links (format: [text](url)) should ALWAYS be category:"navigation"
+  6. Code blocks (``` markers) should ALWAYS be category:"code"  
+  7. A section ends when content type changes (e.g., navigation→content)
+  8. Minimum section size is 3 lines (don't create tiny sections)
+  9. If a line is blank, include it with the section above
+  10. Group consecutive navigation links together as one section
+  """
+
+
+
+
+
+
+
+
+
+
+
+
+
+SUBTRACTIVE_FILTER_STRICT = """
+You are reviewing numbered content to identify ALL irrelevant sections for deletion.
 
 CONTENT:
 {numbered_corpus}
@@ -491,16 +548,81 @@ CONTENT:
 WHAT TO PRESERVE:
 {thing_to_extract}
 
-TASK:
-Identify line ranges containing irrelevant content that should be deleted.
-Keep all content related to the criteria above.
+
+You are reviewing numbered content to identify ALL irrelevant sections for deletion.
+
+CRITICAL INSTRUCTIONS:
+1. identfy EVERYTHING that is not directly about the preservation criteria
+2. Be EXTREMELY AGGRESSIVE - when in doubt, positvitly identfy it for deletion
+3. Check EVERY SINGLE LINE - do not skip any lines
+4. Lines with navigation links (like [Products], [APIs], etc.) MUST be identifed for deleted
+5. If you see multiple navigation items on consecutive lines, identif  ALL of them as one range for deletion
+
+MUST DELETE (NO EXCEPTIONS):
+- Lines containing navigation links like [Something](/path) or [Edit Profile]  
+- Lines with "Sign in", "Sign out", "Log in", etc.
+- Lines that are just lists of links to other pages
+- ALL breadcrumbs, menus, headers, footers
+- ALL UI elements, buttons, navigation
+- ALL marketing, ads, promotions
+- ALL social media links
+- ANY line that contains links to other documentation sections
+- ANY line starting with [ and containing multiple links
+
+IMPORTANT: Make sure deletion ranges are CONTINUOUS. If lines 1-11 all contain navigation, delete as "start": 1, "end": 11, not as separate ranges.
 
 OUTPUT FORMAT (JSON only):
 {{
   "deletions": [
-    {{"start_line": X, "end_line": Y, "reason": "brief_description"}}
-  ]
+    {{"start": X, "end": Y}}
+  ],
+  "total_lines_to_delete": (calculate total),
+  "reasoning": "Brief explanation"
 }}
 
-Output ONLY the JSON with line numbers to delete.
+Output ONLY valid JSON. Be thorough - delete ALL irrelevant content.
+"""
+
+OLD_SUBTRACTIVE_FILTER_STRICT = """
+You are reviewing numbered content to identify ALL irrelevant sections for deletion.
+
+CONTENT:
+{numbered_corpus}
+
+WHAT TO PRESERVE:
+{thing_to_extract}
+
+
+You are reviewing numbered content to identify ALL irrelevant sections for deletion.
+
+CRITICAL INSTRUCTIONS:
+1. Delete EVERYTHING that is not directly about the preservation criteria
+2. Be EXTREMELY AGGRESSIVE - when in doubt, DELETE IT
+3. Check EVERY SINGLE LINE - do not skip any lines
+4. Lines with navigation links (like [Products], [APIs], etc.) MUST be deleted
+5. If you see multiple navigation items on consecutive lines, delete ALL of them as one range
+
+MUST DELETE (NO EXCEPTIONS):
+- Lines containing navigation links like [Something](/path) or [Edit Profile]  
+- Lines with "Sign in", "Sign out", "Log in", etc.
+- Lines that are just lists of links to other pages
+- ALL breadcrumbs, menus, headers, footers
+- ALL UI elements, buttons, navigation
+- ALL marketing, ads, promotions
+- ALL social media links
+- ANY line that contains links to other documentation sections
+- ANY line starting with [ and containing multiple links
+
+IMPORTANT: Make sure deletion ranges are CONTINUOUS. If lines 1-11 all contain navigation, delete as "start": 1, "end": 11, not as separate ranges.
+
+OUTPUT FORMAT (JSON only):
+{{
+  "deletions": [
+    {{"start": X, "end": Y}}
+  ],
+  "total_lines_to_delete": (calculate total),
+  "reasoning": "Brief explanation"
+}}
+
+Output ONLY valid JSON. Be thorough - delete ALL irrelevant content.
 """

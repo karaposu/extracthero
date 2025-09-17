@@ -53,10 +53,10 @@ SAMPLE_HTML = """<html>
 </body>
 </html>"""
 
-# Test 1: Liberal Strategy (Both Modes)
-def test_liberal_strategy():
-    """Test liberal strategy - should keep more content when in doubt"""
-    print_test_header("1. Liberal Strategy")
+# Test 1: Relaxed Strategy (Both Modes)
+def test_relaxed_strategy():
+    """Test relaxed strategy - should keep more content when in doubt"""
+    print_test_header("1. Relaxed Strategy")
     
     filter_hero = FilterHero()
     specs = [WhatToRetain(
@@ -71,7 +71,7 @@ def test_liberal_strategy():
         result_ext = filter_hero.run(
             text=SAMPLE_HTML,
             extraction_spec=specs,
-            filter_strategy="liberal",
+            filter_strategy="relaxed",
             filter_mode="extractive"
         )
         
@@ -93,7 +93,7 @@ def test_liberal_strategy():
         result_sub = filter_hero.run(
             text=SAMPLE_HTML,
             extraction_spec=specs,
-            filter_strategy="liberal",
+            filter_strategy="relaxed",
             filter_mode="subtractive"
         )
         
@@ -109,8 +109,8 @@ def test_liberal_strategy():
             )
             
             # Liberal should preserve more content
-            if result_sub.original_line_count and result_sub.filtered_line_count:
-                retention_rate = result_sub.filtered_line_count / result_sub.original_line_count
+            if result_sub.original_line_count and result_sub.retained_line_count:
+                retention_rate = result_sub.retained_line_count / result_sub.original_line_count
                 passed &= print_result(
                     retention_rate > 0.5,
                     f"Liberal retention rate: {retention_rate:.1%} (should be high)"
@@ -185,10 +185,10 @@ def test_contextual_strategy():
     
     return passed
 
-# Test 3: Inclusive Strategy
-def test_inclusive_strategy():
-    """Test inclusive strategy - includes anything potentially related"""
-    print_test_header("3. Inclusive Strategy")
+# Test 3: Focused Strategy
+def test_focused_strategy():
+    """Test focused strategy - includes anything potentially related"""
+    print_test_header("3. Focused Strategy")
     
     filter_hero = FilterHero()
     specs = [WhatToRetain(
@@ -202,7 +202,7 @@ def test_inclusive_strategy():
         result = filter_hero.run(
             text=SAMPLE_HTML,
             extraction_spec=specs,
-            filter_strategy="inclusive",
+            filter_strategy="focused",
             filter_mode="extractive"
         )
         
@@ -227,10 +227,10 @@ def test_inclusive_strategy():
     
     return passed
 
-# Test 4: Recall Strategy
-def test_recall_strategy():
-    """Test recall strategy - prioritizes not missing anything"""
-    print_test_header("4. Recall Strategy")
+# Test 4: Preserve Strategy
+def test_preserve_strategy():
+    """Test preserve strategy - prioritizes not missing anything"""
+    print_test_header("4. Preserve Strategy")
     
     filter_hero = FilterHero()
     specs = [WhatToRetain(
@@ -244,7 +244,7 @@ def test_recall_strategy():
         result = filter_hero.run(
             text=SAMPLE_HTML,
             extraction_spec=specs,
-            filter_strategy="recall",
+            filter_strategy="preserve",
             filter_mode="subtractive"
         )
         
@@ -255,8 +255,8 @@ def test_recall_strategy():
         
         if result.success:
             # Recall should have very high retention
-            if result.original_line_count and result.filtered_line_count:
-                retention_rate = result.filtered_line_count / result.original_line_count
+            if result.original_line_count and result.retained_line_count:
+                retention_rate = result.retained_line_count / result.original_line_count
                 passed &= print_result(
                     retention_rate > 0.6,
                     f"Recall retention rate: {retention_rate:.1%} (should be very high)"
@@ -280,10 +280,10 @@ def test_recall_strategy():
     
     return passed
 
-# Test 5: Base Strategy and Strategy Comparison
-def test_base_and_compare_strategies():
-    """Test base strategy and compare all strategies"""
-    print_test_header("5. Base Strategy & Comparison")
+# Test 5: Strict Strategy and Strategy Comparison
+def test_strict_and_compare_strategies():
+    """Test strict strategy and compare all strategies"""
+    print_test_header("5. Strict Strategy & Comparison")
     
     filter_hero = FilterHero()
     specs = [WhatToRetain(
@@ -296,7 +296,7 @@ def test_base_and_compare_strategies():
     
     try:
         # Test each strategy in subtractive mode to compare retention
-        for strategy in ["base", "liberal", "contextual", "inclusive", "recall"]:
+        for strategy in ["strict", "relaxed", "contextual", "focused", "preserve"]:
             result = filter_hero.run(
                 text=SAMPLE_HTML,
                 extraction_spec=specs,
@@ -304,8 +304,8 @@ def test_base_and_compare_strategies():
                 filter_mode="subtractive"
             )
             
-            if result.success and result.original_line_count and result.filtered_line_count:
-                retention = result.filtered_line_count / result.original_line_count
+            if result.success and result.original_line_count and result.retained_line_count:
+                retention = result.retained_line_count / result.original_line_count
                 strategies_retention[strategy] = retention
                 print(f"  {strategy:12s}: {retention:.1%} retention, {result.lines_removed} lines removed")
         
@@ -313,11 +313,11 @@ def test_base_and_compare_strategies():
         # recall >= liberal >= inclusive >= contextual >= base
         if len(strategies_retention) == 5:
             passed &= print_result(
-                strategies_retention.get("recall", 0) >= strategies_retention.get("liberal", 0) * 0.9,
+                strategies_retention.get("preserve", 0) >= strategies_retention.get("relaxed", 0) * 0.9,
                 "Recall has highest or near-highest retention"
             )
             passed &= print_result(
-                strategies_retention.get("base", 1) <= strategies_retention.get("liberal", 0) * 1.1,
+                strategies_retention.get("strict", 1) <= strategies_retention.get("relaxed", 0) * 1.1,
                 "Base has lower or similar retention to liberal"
             )
         
@@ -342,11 +342,11 @@ def main():
     results = []
     
     # Run all tests
-    results.append(("Liberal Strategy", test_liberal_strategy()))
+    results.append(("Relaxed Strategy", test_relaxed_strategy()))
     results.append(("Contextual Strategy", test_contextual_strategy()))
-    results.append(("Inclusive Strategy", test_inclusive_strategy()))
-    results.append(("Recall Strategy", test_recall_strategy()))
-    results.append(("Base & Comparison", test_base_and_compare_strategies()))
+    results.append(("Focused Strategy", test_focused_strategy()))
+    results.append(("Preserve Strategy", test_preserve_strategy()))
+    results.append(("Base & Comparison", test_strict_and_compare_strategies()))
     
     # Summary
     print("\n" + "="*80)

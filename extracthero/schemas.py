@@ -1,7 +1,7 @@
 #extracthero/schemes.py
 
 import re
-from typing import List, Union, Dict, Any, Optional,Tuple
+from typing import List, Union, Dict, Any, Optional, Tuple, Literal
 from dataclasses import dataclass
 from typing import Any, Optional
 import time
@@ -13,6 +13,7 @@ from pathlib import Path
 import uuid, datetime as _dt, time
 import tiktoken
 from llmservice import GenerationResult
+from pydantic import BaseModel, Field
 # 
 
 @dataclass
@@ -89,10 +90,10 @@ class WhatToRetain:
 
     # ─────── prompt builder ────────
     def compile(self) -> str:
-        parts: List[str] = [f"Chunk name: {self.name}"]
-
+        parts: List[str] = [f"INTERESTED Target INFORMATION: {self.name}"]
+        
         if self.desc:
-            parts.append(f"Description: {self.desc}")
+            parts.append(f"     Target Info Description: {self.desc}")
 
         if self.example:
             parts.append(f"Example: {self.example}")
@@ -119,7 +120,7 @@ class WhatToRetain:
             )
 
         if self.text_rules:
-            parts.append("Additional rules: " + "; ".join(self.text_rules))
+            parts.append("    Additional rules: " + "; ".join(self.text_rules))
 
         return "\n".join(parts)
     
@@ -198,11 +199,15 @@ class FilterOp:
     filtered_data_token_size: Optional[Any] = None  # Add this parameter
     filter_strategy: Optional[Any] = None
     
+    SSM: Optional[Any] = None # semantic section mapping
+
+   
+    
     # New fields for subtractive mode
     filter_mode: Optional[str] = None  # "extractive" or "subtractive"
     deletions_applied: Optional[List[Dict]] = None  # Line ranges deleted
     original_line_count: Optional[int] = None
-    filtered_line_count: Optional[int] = None
+    retained_line_count: Optional[int] = None
     lines_removed: Optional[int] = None
 
     @classmethod
@@ -215,12 +220,13 @@ class FilterOp:
         generation_result: Optional[Any] = None,  
         success: bool = True,
         error: Optional[str] = None, 
+        SSM: Optional[str] = None, 
         filtered_data_token_size = None, 
         filter_strategy: Optional[Any] = None,
         filter_mode: Optional[str] = None,
         deletions_applied: Optional[List[Dict]] = None,
         original_line_count: Optional[int] = None,
-        filtered_line_count: Optional[int] = None,
+        retained_line_count: Optional[int] = None,
         lines_removed: Optional[int] = None
     ) -> "FilterOp":
         elapsed = time.time() - start_time
@@ -232,13 +238,14 @@ class FilterOp:
             config=config,
             generation_result=generation_result,  # ← Set it here
             error=error, 
+            SSM=SSM, 
             start_time=start_time,
             filtered_data_token_size=filtered_data_token_size,
             filter_strategy=filter_strategy,
             filter_mode=filter_mode,
             deletions_applied=deletions_applied,
             original_line_count=original_line_count,
-            filtered_line_count=filtered_line_count,
+            retained_line_count=retained_line_count,
             lines_removed=lines_removed
         )
     
@@ -294,6 +301,61 @@ class FilterOp:
             encoding=encoding,
         )
       
+        return path
+    
+
+    def save_content(
+        self,
+        format: str = "json",
+        filename: Optional[str] = None,
+        dir: str = "."
+    ) -> Path:
+        """
+        Save the extraction results (LLM output) to a file.
+        
+        Args:
+            format: Output format ('json' or 'markdown')
+            filename: Custom filename (without extension)
+            dir: Directory to save in
+            
+        Returns:
+            Path to the saved file
+        """
+        if not self.content:
+            raise ValueError("No extraction content to save")
+        
+        # Determine file extension
+        ext = '.json' if format == 'json' else '.md'
+
+        import json
+        from datetime import datetime, timezone
+        
+        # Generate filename if not provided
+        if filename is None:
+            timestamp = datetime.now(timezone.utc).strftime("%Y%m%d_%H%M%S")
+            filename = f"extracted_content_{timestamp}{ext}"
+        elif not filename.endswith(ext):
+            filename += ext
+        
+        # Create path
+        path = Path(dir) / filename
+        path.parent.mkdir(parents=True, exist_ok=True)
+        
+        # Save based on format
+        if format == 'json':
+            with open(path, 'w', encoding='utf-8') as f:
+                json.dump(self.content, f, indent=2, ensure_ascii=False, default=str)
+        else:  # markdown format
+            # If content is already a string (markdown from LLM), save directly
+            if isinstance(self.content, str):
+                path.write_text(self.content, encoding='utf-8')
+            # If content is JSON structure, convert to readable text
+            elif isinstance(self.content, (dict, list)):
+                content_str = json.dumps(self.content, indent=2, ensure_ascii=False, default=str)
+                path.write_text(content_str, encoding='utf-8')
+            else:
+                path.write_text(str(self.content), encoding='utf-8')
+        
         return path
 
   

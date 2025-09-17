@@ -15,7 +15,7 @@ from time import time
 from typing import Any, Dict, List, Optional, Tuple, Union
 
 from llmservice import GenerationResult
-from extracthero.myllmservice import MyLLMService
+from extracthero.myllmservice import MyLLMService, TocOutput
 from extracthero.schemas import (
     ExtractConfig,
     FilterOp,
@@ -64,10 +64,11 @@ class FilterHero:
         self,
         text: str | Dict[str, Any],
         extraction_spec: WhatToRetain | List[WhatToRetain],
-        filter_strategy: str = "liberal",
+        filter_strategy: str = "relaxed",
         filter_mode: str = "extractive",  # New parameter: "extractive" or "subtractive"
         max_line_length_for_indexing: Optional[int] = 200,  # New parameter for line truncation in indexed content
-        line_format: str = "[{n}]"  # New parameter for line number format
+        line_format: str = "[{n}]",  # New parameter for line number format
+        model_name: Optional[str] = None  # Model to use (e.g., "gpt-4.1-mini", "gpt-5")
     ) -> FilterOp:
         """
         End-to-end filter phase with support for both extractive and subtractive modes.
@@ -76,7 +77,7 @@ class FilterHero:
         ----------
         filter_mode : str
             "extractive" - Traditional mode, LLM outputs filtered content (default)
-            "subtractive" - New mode, LLM outputs line numbers to delete
+            "subtractive" - New mode, LLM outputs line numbers to delete and we delete them via code
         max_line_length_for_indexing : int or None
             For subtractive mode: max characters per line before truncation in the indexed/numbered content shown to LLM.
             Only affects what the LLM sees, not the final output.
@@ -90,28 +91,45 @@ class FilterHero:
        
         
         if filter_mode == "subtractive":
-            return self._run_subtractive(text, extraction_spec, filter_strategy, max_line_length_for_indexing, line_format)
+            return self._run_subtractive(text, extraction_spec, filter_strategy, max_line_length_for_indexing, line_format, model_name)
         else:
-            return self._run_extractive(text, extraction_spec, filter_strategy)
+            return self._run_extractive(text, extraction_spec, filter_strategy, model_name)
     
-    def _run_extractive(self, text, extraction_spec, filter_strategy):
+    def _run_extractive(self, text, extraction_spec, filter_strategy, model_name=None):
 
         ts = time()
         """Existing extractive filtering logic"""
         content = None
         filtered_data_token_size = None
+        
+        # Calculate original line count
+        if isinstance(text, str):
+            original_lines = text.split('\n')
+        elif isinstance(text, dict):
+            original_lines = _json.dumps(text, indent=2).split('\n')
+        else:
+            original_lines = str(text).split('\n')
+        
+        original_line_count = len(original_lines)
 
         gen_result = self.engine.execute_filtering(
             text, 
             extraction_spec, 
-            filter_strategy
+            filter_strategy,
+            model_name
         )
 
+        # Calculate retained line count and other metrics
+        retained_line_count = None
+        
         if gen_result.success:
             content = gen_result.content
             if content is not None:
                 try:
                     filtered_data_token_size = len(encoding.encode(content))
+                    # Calculate retained line count
+                    filtered_lines = content.split('\n')
+                    retained_line_count = len(filtered_lines)
                 except Exception:
                     filtered_data_token_size = None
 
@@ -125,10 +143,20 @@ class FilterHero:
             error=None if gen_result.success else "LLM filter failed",
             filtered_data_token_size=filtered_data_token_size,
             filter_strategy=filter_strategy,
-            filter_mode="extractive"
+            filter_mode="extractive",
+            original_line_count=original_line_count,
+            retained_line_count=retained_line_count
         )
     
-    def _run_subtractive(self, text, extraction_spec, filter_strategy, max_line_length_for_indexing=200, line_format="[{n}]"):
+    def _run_subtractive(self,
+                        text,
+                        extraction_spec,
+                        filter_strategy,
+                        max_line_length_for_indexing=200,
+                        line_format="[{n}]",
+                        approach="semantic-section-mapping",
+                        model_name=None):
+        
         """
         New subtractive filtering logic using line-based deletion.
         
@@ -158,27 +186,50 @@ class FilterHero:
             line_format=line_format
         )
         
-        # Step 2: Get deletion indices from LLM
+        # Step 2: Get ToC sections from LLM
         gen_result = self.engine.execute_subtractive_filtering(
             numbered_content,
             extraction_spec,
-            filter_strategy
+            filter_strategy,
+            model_name
         )
         
-        # Step 3: Parse and apply deletions
-        if gen_result.success:
-            deletions = self._parse_deletion_response(gen_result.content)
-            validated_deletions = self._validate_line_ranges(deletions, len(original_lines))
-            filtered_text = self._apply_line_deletions(original_lines, validated_deletions)
+        # Step 3: Parse ToC result and apply filtering
+        if gen_result.success and gen_result.content:
+            # The content should be a TocOutput object from get_content_toc()
+            if not isinstance(gen_result.content, TocOutput):
+                return FilterOp.from_result(
+                    config=self.config,
+                    content=None,
+                    usage=gen_result.usage,
+                    generation_result=gen_result,
+                    start_time=start_time,
+                    success=False,
+                    error=f"Expected TocOutput but got {type(gen_result.content).__name__}",
+                    filtered_data_token_size=None,
+                    filter_strategy=filter_strategy,
+                    filter_mode="subtractive"
+                )
             
-            # Calculate token size
-            try:
-                filtered_data_token_size = len(encoding.encode(filtered_text))
-            except:
-                filtered_data_token_size = None
+            SSM_output = gen_result.content
             
-            # Calculate statistics
-            lines_removed = sum(d['end_line'] - d['start_line'] + 1 for d in validated_deletions)
+            # Convert SSM sections to lines to keep
+            lines_to_keep = self._convert_toc_to_lines_to_keep(SSM_output, len(original_lines))
+            
+            # Build filtered text from kept lines
+            filtered_text = self._build_filtered_text(original_lines, lines_to_keep)
+            
+            # Calculate metrics
+            lines_removed = len(original_lines) - len(lines_to_keep)
+            filtered_data_token_size = None
+            if filtered_text:
+                try:
+                    filtered_data_token_size = len(encoding.encode(filtered_text))
+                except Exception:
+                    filtered_data_token_size = None
+            
+            # Build deletion ranges for metadata
+            deletions_applied = self._build_deletion_ranges(lines_to_keep, len(original_lines), SSM_output)
             
             return FilterOp.from_result(
                 config=self.config,
@@ -188,23 +239,24 @@ class FilterHero:
                 start_time=start_time,
                 success=True,
                 error=None,
+                SSM=SSM_output, 
                 filtered_data_token_size=filtered_data_token_size,
                 filter_strategy=filter_strategy,
                 filter_mode="subtractive",
-                deletions_applied=validated_deletions,
+                deletions_applied=deletions_applied,
                 original_line_count=len(original_lines),
-                filtered_line_count=len(filtered_text.split('\n')),
+                retained_line_count=len(lines_to_keep),
                 lines_removed=lines_removed
             )
         else:
             return FilterOp.from_result(
                 config=self.config,
                 content=None,
-                usage=gen_result.usage,
+                usage=gen_result.usage if gen_result else None,
                 generation_result=gen_result,
                 start_time=start_time,
                 success=False,
-                error=f"Subtractive filtering failed: {gen_result.error_message if hasattr(gen_result, 'error_message') else 'Unknown error'}",
+                error=f"Subtractive filtering failed: {gen_result.error_message if gen_result and hasattr(gen_result, 'error_message') else 'Unknown error'}",
                 filtered_data_token_size=None,
                 filter_strategy=filter_strategy,
                 filter_mode="subtractive"
@@ -260,6 +312,152 @@ class FilterHero:
             print(f"Failed to parse deletion response: {e}")
             return []
     
+    def _should_keep_section(self, section) -> bool:
+        """
+        Determine if a section should be kept based on its properties.
+        
+        This method centralizes the decision logic for section filtering,
+        making it easy to modify the criteria or add new strategies.
+        
+        Parameters
+        ----------
+        section : TocSection
+            A section from the Table of Contents
+            
+        Returns
+        -------
+        bool
+            True if the section should be kept, False if it should be deleted
+        """
+        # Always keep if marked as content
+        if section.is_content:
+            return True
+        
+        # Always keep code and content categories, even if not marked as is_content
+        # (This handles cases where LLM might mark code blocks as non-content by mistake)
+        if section.category in ["code", "content"]:
+            return True
+        
+        # For navigation, footer, and header categories:
+        # Only delete them if is_content is explicitly False
+        if section.category in ["navigation", "footer", "header"]:
+            if section.is_content is False:
+                return False  # Delete only if explicitly marked as non-content
+            return True  # Keep if is_content is True or unclear
+        
+        # For other categories (metadata, etc.), keep by default unless explicitly non-content
+        return section.is_content if section.is_content is not None else True
+    
+    def _convert_toc_to_lines_to_keep(self, toc_output: TocOutput, total_lines: int) -> set:
+        """
+        Convert ToC sections marked as content into a set of line numbers to keep.
+        
+        Parameters
+        ----------
+        toc_output : TocOutput
+            The Table of Contents with sections marked as content/non-content
+        total_lines : int
+            Total number of lines in the original document
+            
+        Returns
+        -------
+        set
+            Set of line numbers (1-indexed) to keep in the filtered output
+        """
+        lines_to_keep = set()
+        for section in toc_output.sections:
+            if self._should_keep_section(section):
+                # Keep lines from this section
+                for line_num in range(section.start_line, section.end_line + 1):
+                    if 1 <= line_num <= total_lines:
+                        lines_to_keep.add(line_num)
+        return lines_to_keep
+    
+    
+    
+    def _build_filtered_text(self, original_lines: List[str], lines_to_keep: set) -> str:
+        """
+        Build filtered text by keeping only specified line numbers.
+        
+        Parameters
+        ----------
+        original_lines : List[str]
+            Original document lines
+        lines_to_keep : set
+            Set of line numbers (1-indexed) to keep
+            
+        Returns
+        -------
+        str
+            Filtered text containing only the kept lines
+        """
+        filtered_lines = []
+        for i, line in enumerate(original_lines, 1):
+            if i in lines_to_keep:
+                filtered_lines.append(line)
+        
+        return '\n'.join(filtered_lines)
+    
+    def _build_deletion_ranges(self, lines_to_keep: set, total_lines: int, ssm_output: Optional[TocOutput] = None) -> List[Dict]:
+        """
+        Build deletion ranges from lines to keep for metadata tracking.
+        
+        Parameters
+        ----------
+        lines_to_keep : set
+            Set of line numbers (1-indexed) to keep
+        total_lines : int
+            Total number of lines in the original document
+        ssm_output : Optional[TocOutput]
+            The SSM output containing section information
+            
+        Returns
+        -------
+        List[Dict]
+            List of deletion ranges with start_line, end_line, and section name
+        """
+        deletions_applied = []
+        
+        # If we have SSM data, use it to get section names for deleted ranges
+        if ssm_output:
+            for section in ssm_output.sections:
+                # Check if this section should be deleted (not in lines_to_keep)
+                if not self._should_keep_section(section):
+                    deletions_applied.append({
+                        "start_line": section.start_line,
+                        "end_line": section.end_line,
+                        "name": section.name,
+                        "category": section.category,
+                        "is_content": section.is_content,
+                        "is_navigation": section.is_navigation
+                    })
+        else:
+            # Fallback to the old method if no SSM data
+            current_deletion_start = None
+            
+            for i in range(1, total_lines + 1):
+                if i not in lines_to_keep:
+                    if current_deletion_start is None:
+                        current_deletion_start = i
+                else:
+                    if current_deletion_start is not None:
+                        deletions_applied.append({
+                            "start_line": current_deletion_start,
+                            "end_line": i - 1,
+                            "name": "Unknown section"
+                        })
+                        current_deletion_start = None
+            
+            # Handle deletion at the end
+            if current_deletion_start is not None:
+                deletions_applied.append({
+                    "start_line": current_deletion_start,
+                    "end_line": total_lines,
+                    "name": "Unknown section"
+                })
+        
+        return deletions_applied
+    
     def _validate_line_ranges(self, deletions, total_lines):
         """Validate that line ranges are within bounds"""
         valid_deletions = []
@@ -298,7 +496,8 @@ class FilterHero:
         filter_strategy: str = "contextual",
         filter_mode: str = "extractive",  # New parameter
         max_line_length_for_indexing: Optional[int] = 200,
-        line_format: str = "[{n}]"
+        line_format: str = "[{n}]",
+        model_name: Optional[str] = None
     ) -> FilterOp:
         """Async end-to-end filter phase with support for both modes."""
         ts = time()
@@ -316,7 +515,8 @@ class FilterHero:
             gen_result = await self.engine.execute_filtering_async(
                 text, 
                 extraction_spec, 
-                filter_strategy  
+                filter_strategy,
+                model_name  
             )
 
             if gen_result.success:

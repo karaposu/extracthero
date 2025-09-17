@@ -34,16 +34,20 @@ class FilterEngine:
     def execute_filtering(
         self,
         corpus: str,
-        extraction_spec: Union[WhatToRetain, List[WhatToRetain]],
+        extraction_spec: Union[WhatToRetain, List[WhatToRetain], str],
         strategy: str,
         model_name: Optional[str] = None
-    ) -> Tuple[Any, Optional[Dict[str, int]], GenerationResult]:
+    ) -> GenerationResult:
         
         if isinstance(extraction_spec, WhatToRetain):
-            target_desc = extraction_spec.desc
+            # Use the compile method from WhatToRetain
+            target_desc = extraction_spec.compile()
+        elif isinstance(extraction_spec, str):
+            target_desc = extraction_spec
         else:
-            target_desc = "; ".join(spec.desc for spec in extraction_spec)
-        
+            # Handle list of WhatToRetain specs - compile each one
+            compiled_specs = [spec.compile() for spec in extraction_spec]
+            target_desc = "\n\n".join(compiled_specs)
         
         gen_results = self.llm.filter_via_llm(
                 corpus, 
@@ -53,7 +57,6 @@ class FilterEngine:
             )
         
         return gen_results
-        #return gen_results.content, gen_results.usage, gen_results
     
     def execute_subtractive_filtering(
         self,
@@ -63,22 +66,30 @@ class FilterEngine:
         model_name: Optional[str] = None
     ) -> GenerationResult:
         """
-        Execute subtractive filtering - returns line numbers to delete.
+        Execute subtractive filtering using ToC approach.
         
-        This bypasses output token limitations by returning indices
-        instead of content.
+        This uses Semantic Section Mapping to identify document sections
+        and determine which to keep based on extraction spec.
         """
         
         if isinstance(extraction_spec, WhatToRetain):
-            target_desc = extraction_spec.desc
+            # Use the compile method from WhatToRetain
+            target_desc = extraction_spec.compile()
+        elif isinstance(extraction_spec, str):
+            target_desc=extraction_spec
         else:
-            target_desc = "; ".join(spec.desc for spec in extraction_spec)
+            # Handle list of WhatToRetain specs - compile each one
+            compiled_specs = [spec.compile() for spec in extraction_spec]
+            target_desc = "\n\n".join(compiled_specs)
         
-        # Use specialized subtractive filtering via LLM
-        gen_results = self.llm.get_deletions_via_llm(
-            numbered_corpus,
-            target_desc,
-            filter_strategy=strategy,
+        # Count lines in numbered_corpus
+        max_line = len(numbered_corpus.split('\n'))
+        
+        # Use ToC-based content identification via LLM
+        gen_results = self.llm.get_content_toc(
+            numbered_corpus=numbered_corpus,
+            max_line=max_line,
+            what_to_retain=target_desc,
             model=model_name
         )
         
@@ -88,18 +99,20 @@ class FilterEngine:
     async def execute_filtering_async(
         self,
         corpus: str,
-        extraction_spec: Union[WhatToRetain, List[WhatToRetain]],
+        extraction_spec: Union[WhatToRetain, List[WhatToRetain], str],
         strategy: str,
         model_name: Optional[str] = None
-    ) -> Tuple[Any, Optional[Dict[str, int]], GenerationResult]:
+    ) -> GenerationResult:
         
-
-
         if isinstance(extraction_spec, WhatToRetain):
-            target_desc = extraction_spec.desc
+            # Use the compile method from WhatToRetain
+            target_desc = extraction_spec.compile()
+        elif isinstance(extraction_spec, str):
+            target_desc = extraction_spec
         else:
-            target_desc = "; ".join(spec.desc for spec in extraction_spec)
-        
+            # Handle list of WhatToRetain specs - compile each one
+            compiled_specs = [spec.compile() for spec in extraction_spec]
+            target_desc = "\n\n".join(compiled_specs)
         
         gen_results = await self.llm.filter_via_llm_async(
                 corpus, 
@@ -108,7 +121,6 @@ class FilterEngine:
                 model=model_name
             )
         
-
         return gen_results
         
        
@@ -136,7 +148,7 @@ if __name__ == "__main__":
 
     gen_results=filter_engine.execute_filtering(dummy_sample,
                                     extraction_spec=specs, 
-                                    strategy="liberal", 
+                                    strategy="relaxed", 
                                     model_name="gpt-4o-mini" )
     
    

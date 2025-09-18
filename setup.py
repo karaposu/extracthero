@@ -5,7 +5,7 @@ import os
 
 setup(
     name='extracthero',  # Package name
-    version='0.1.7',  # Version of your package
+    version='0.1.8',  # Version of your package
     author='Enes Kuzucu',  # Your name
     
     description='LLM-driven extraction from raw HTML and website screenshots, preserving spatial context with optional validation.',
